@@ -9,7 +9,7 @@ mkdirSync("dist", { recursive: true });
 const result = await Bun.build({
   entrypoints: ["src/client/main.ts"],
   outdir: "dist",
-  naming: "main.js",
+  naming: "assets/game.js",
   minify: true,
   target: "browser",
 });
@@ -19,5 +19,5 @@ if (!result.success) {
 }
 
 const shell = await Bun.file("public/index.html").text();
-await Bun.write("dist/index.html", shell.replace("../src/client/main.ts", "./main.js"));
-console.log("built dist/ (index.html + main.js)");
+await Bun.write("dist/index.html", shell.replace("../src/client/main.ts", "./assets/game.js"));
+console.log("built dist/ (index.html + assets/game.js)");

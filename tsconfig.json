@@ -15,5 +15,5 @@
     "allowSyntheticDefaultImports": true,
     "types": ["bun"]
   },
-  "include": ["server.ts", "src", "test"]
+  "include": ["dev", "build.ts", "src", "test"]
 }

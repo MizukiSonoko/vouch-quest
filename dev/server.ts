@@ -7,7 +7,7 @@
 //   VOUCH_NODE_URL   node base URL (default http://127.0.0.1:8787 — the SSH tunnel)
 //   QUEST_PORT       game port (default 5178)
 
-import indexHtml from "./public/index.html";
+import indexHtml from "../public/index.html";
 
 const NODE_URL = (process.env["VOUCH_NODE_URL"] ?? "http://127.0.0.1:8787").replace(/\/$/, "");
 const PORT = Number(process.env["QUEST_PORT"] ?? 5178);
