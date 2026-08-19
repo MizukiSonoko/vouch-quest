@@ -4,6 +4,6 @@
   "outputDirectory": "dist",
   "installCommand": "bun install",
   "rewrites": [
-    { "source": "/node/:path*", "destination": "https://node.example.org/:path*" }
+    { "source": "/node/:path*", "destination": "http://80.78.31.3:8787/:path*" }
   ]
 }
