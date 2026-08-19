@@ -1,42 +1,47 @@
-// Thin fetch wrappers over the game server's /api. Every call either returns data
-// or throws an Error whose message is safe to show in the message window.
+// The game's data layer, now fully client-side: the browser wallet signs, the
+// snapshot is aggregated from the node's observation reads, and the only server
+// between us and the node is a dumb same-origin `/node` proxy (dev: server.ts,
+// prod: a Vercel rewrite). Function signatures are kept from the old server-API
+// version so main.ts stays unchanged.
 
 import type { ActResult, LogEventView, Snapshot } from "../shared";
+import { actionSchema, buildSnapshot, dispatchAction, findHeroAgent } from "./logic";
+import { type BrowserWallet, loadHeroName, loadOrCreateWallet, reads, register, saveHeroName } from "./wire";
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  const body = (await res.json().catch(() => null)) as T | { error?: string } | null;
-  if (!res.ok || body === null) {
-    const reason = body && typeof body === "object" && "error" in body ? (body.error ?? res.statusText) : res.statusText;
-    throw new Error(`つうしんに しっぱいした… (${reason})`);
-  }
-  return body as T;
+let wallet: BrowserWallet | null = null;
+function getWallet(): BrowserWallet {
+  wallet ??= loadOrCreateWallet();
+  return wallet;
 }
 
 export function fetchWorld(): Promise<Snapshot> {
-  return getJson<Snapshot>("/api/world");
+  return buildSnapshot(loadHeroName());
 }
 
-export function fetchLog(since: number): Promise<LogEventView[]> {
-  return getJson<LogEventView[]>(`/api/log?since=${since}`);
+export async function fetchLog(since: number): Promise<LogEventView[]> {
+  return (await reads.log(since)) as LogEventView[];
 }
 
 export async function postAct(action: Record<string, unknown>): Promise<ActResult> {
-  const res = await fetch("/api/act", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(action),
-  });
-  const body = (await res.json().catch(() => null)) as ActResult | null;
-  if (body === null) throw new Error("つうしんに しっぱいした…");
-  return body;
+  const heroName = loadHeroName();
+  if (!heroName) return { ok: false, reason: "no hero yet — name your hero first" };
+  const parsed = actionSchema.safeParse(action);
+  if (!parsed.success) return { ok: false, reason: parsed.error.issues[0]?.message ?? "bad action" };
+  const agents = (await reads.agents()) as Parameters<typeof findHeroAgent>[0];
+  const hero = { heroName, agentId: findHeroAgent(agents, heroName)?.id ?? null };
+  return dispatchAction(getWallet(), hero, parsed.data);
 }
 
 export async function postRegister(heroName: string): Promise<{ ok: boolean; reason?: string }> {
-  const res = await fetch("/api/register", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ heroName }),
-  });
-  return ((await res.json().catch(() => null)) as { ok: boolean; reason?: string } | null) ?? { ok: false, reason: "no response" };
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(heroName) || heroName.length > 64) {
+    return { ok: false, reason: "なまえは romaji で (れい: Mizuki)" };
+  }
+  const res = await register(getWallet(), heroName);
+  if (!res.ok) {
+    // First-writer-wins on the node: a taken name belongs to someone else's key.
+    const reason = res.reason === "already-registered" ? "そのなまえは すでに つかわれている" : res.reason;
+    return { ok: false, reason };
+  }
+  saveHeroName(heroName);
+  return { ok: true };
 }

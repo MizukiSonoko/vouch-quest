@@ -9,11 +9,12 @@
     "dev": "bun --hot server.ts",
     "start": "bun server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "build": "bun build.ts"
   },
   "dependencies": {
-    "vouch-cli": "file:../vouch/vouch-cli",
-    "vouch-core": "file:../vouch/vouch-core",
+    "@noble/curves": "^1.9.0",
+    "canonicalize": "^2.1.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {

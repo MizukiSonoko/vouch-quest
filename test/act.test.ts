@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { actionSchema, findHeroAgent, newItemId } from "../src/server/act";
+import { actionSchema, findHeroAgent, newItemId } from "../src/client/logic";
 import type { AgentView } from "../src/shared";
 
 describe("actionSchema", () => {

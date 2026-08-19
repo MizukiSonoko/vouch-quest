@@ -225,7 +225,7 @@ export function buildSprites(): SpriteSet {
   const tiles = new Map<Tile, HTMLCanvasElement>([
     [Tile.Grass, draw(GRASS)],
     [Tile.Grass2, draw(GRASS2)],
-    [Tile.Tree, draw(TREE)],
+    [Tile.Tree, draw(TREE.map((r) => r.replaceAll(".", "g")))],
     [Tile.Water, draw(WATER)],
     [Tile.Sand, draw(SAND)],
     [Tile.Fence, draw(FENCE)],

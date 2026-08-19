@@ -5,8 +5,8 @@
     "": {
       "name": "vouch-quest",
       "dependencies": {
-        "vouch-cli": "file:../vouch/vouch-cli",
-        "vouch-core": "file:../vouch/vouch-core",
+        "@noble/curves": "^1.9.0",
+        "canonicalize": "^2.1.0",
         "zod": "^4.0.0",
       },
       "devDependencies": {
@@ -32,14 +32,6 @@
 
     "undici-types": ["undici-types@8.3.0", "", {}, "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="],
 
-    "vouch-cli": ["vouch-cli@file:../vouch/vouch-cli", { "dependencies": { "vouch-core": "file:../vouch-core", "vouch-node": "file:../vouch-node" }, "devDependencies": { "@types/bun": "^1.1.0", "typescript": "^5.6.0" }, "bin": { "vouch": "src/main.ts" } }],
-
-    "vouch-core": ["vouch-core@file:../vouch/vouch-core", { "dependencies": { "@noble/curves": "^1.7.0", "canonicalize": "^2.0.0", "zod": "^4.0.0" }, "devDependencies": { "@types/bun": "^1.1.0", "typescript": "^5.6.0" } }],
-
     "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
-
-    "vouch-cli/vouch-core": ["vouch-core@file:../vouch/vouch-core", {}],
-
-    "vouch-cli/vouch-node": ["vouch-node@file:../vouch/vouch-node", {}],
   }
 }

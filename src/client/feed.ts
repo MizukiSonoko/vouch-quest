@@ -2,9 +2,16 @@
 
 import type { LogEventView } from "../shared";
 
-function str(payload: Record<string, unknown>, key: string): string {
-  const v = payload[key];
-  return typeof v === "string" ? v : "?";
+/** First string found at any of the dot-paths — event payloads nest differently per type. */
+function str(payload: Record<string, unknown>, ...paths: string[]): string {
+  for (const path of paths) {
+    let v: unknown = payload;
+    for (const key of path.split(".")) {
+      v = typeof v === "object" && v !== null ? (v as Record<string, unknown>)[key] : undefined;
+    }
+    if (typeof v === "string") return v;
+  }
+  return "?";
 }
 
 interface SettleEntry {
@@ -24,9 +31,9 @@ export function eventToMessage(event: LogEventView): string {
   const p = event.payload;
   switch (event.type) {
     case "region.founded":
-      return `あたらしいむら「${str(p, "regionId")}」が たんじょうした!`;
+      return `あたらしいむら「${str(p, "region.id", "regionId")}」が たんじょうした!`;
     case "agent.admitted":
-      return `${str(p, "id")}が むらの なかまに くわわった!`;
+      return `${str(p, "admission.id", "id")}が むらの なかまに くわわった!`;
     case "agent.migrated":
       return `${str(p, "agentId")}は ${str(p, "toRegion")}へ ひっこした。`;
     case "agent.vouched":
@@ -36,7 +43,7 @@ export function eventToMessage(event: LogEventView): string {
     case "economy.minted":
       return `どこからともなく おかねが うまれた…`;
     case "item.minted":
-      return `${str(p, "owner")}は 「${str(p, "itemKind")}」を てにいれた!`;
+      return `${str(p, "owner")}は 「${str(p, "kind", "itemKind")}」を てにいれた!`;
     case "item.transferred":
       return `${str(p, "from")}は ${str(p, "to")}に どうぐを ゆずった。`;
     case "region.institution.changed":

@@ -20,19 +20,20 @@ is the world log, live.
 ## Architecture
 
 ```
-browser (canvas, zero assets — all pixel art is procedural)
-   │  /api/world /api/log /api/act /api/register
+browser (canvas, zero assets — all pixel art procedural)
+   │  Ed25519 key in localStorage; EVERY command signed IN the browser
+   │  reads + writes go to same-origin /node/*
    ▼
-bun server (server.ts) ── signs with YOUR key via the VouchClient SDK
-   │  HTTP, non-custodial
+/node proxy — dev: server.ts (Bun), prod: a Vercel rewrite. Holds no keys.
    ▼
-vouch-node (e.g. through an SSH tunnel on 127.0.0.1:8787)
+vouch-node (dev: SSH tunnel on 127.0.0.1:8787, prod: the public node URL)
 ```
 
-The server reuses the **vouch-cli wallet** (`~/.vouch/key`, `~/.vouch/config.json`),
-so a hero you already registered with the CLI walks right in. One key signs for two
-principals: your hero name (region owner / governance) and `hero@region` (the agent
-that trades). The browser never sees the key.
+**Multiplayer, non-custodial:** each visitor gets their own Ed25519 seed
+(generated into localStorage on first load) and registers their own hero. One key
+signs for two principals: the hero name (region owner / governance) and
+`hero@region` (the agent that trades). No server ever sees a key — byte-parity
+with the node's signed formats is pinned by `test/wire.test.ts`.
 
 ## Run
 
@@ -46,6 +47,7 @@ ssh -N -L 8787:127.0.0.1:8787 node@<your-node>
 # 2. install & start
 bun install
 bun dev            # http://localhost:5178
+bun run build      # static dist/ for Vercel (rewrites /node/* to your public node)
 
 # checks
 bun run typecheck && bun test
