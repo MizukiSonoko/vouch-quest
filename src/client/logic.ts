@@ -28,6 +28,9 @@ export const actionSchema = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("mintItem"), itemKind: z.string().min(1).max(32), owner: identifier }),
   z.object({ kind: z.literal("amendMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
+  z.object({ kind: z.literal("amendGovernance"), regionId, governance: z.enum(["dictatorship", "council"]) }),
+  z.object({ kind: z.literal("proposeMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
+  z.object({ kind: z.literal("proposeGovernance"), regionId, governance: z.enum(["dictatorship"]) }),
 ]);
 
 export type Action = z.infer<typeof actionSchema>;
@@ -116,7 +119,48 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
         regionId: action.regionId,
         change: { policy: "items", value: { minting: action.minting } },
       });
+    case "amendGovernance": {
+      // Dictatorship → council needs a member roll and a threshold; preset both from
+      // the current residents (simple majority). The node rejects amend under council.
+      if (action.governance === "dictatorship") {
+        return asOwner(wallet, hero, {
+          kind: "amend",
+          regionId: action.regionId,
+          change: { policy: "governance", value: { kind: "dictatorship" } },
+        });
+      }
+      const members = await residentIds(action.regionId);
+      if (members.length === 0) return { ok: false, reason: "no-residents-for-council" };
+      return asOwner(wallet, hero, {
+        kind: "amend",
+        regionId: action.regionId,
+        change: {
+          policy: "governance",
+          value: { kind: "council", members, threshold: Math.max(1, Math.ceil(members.length / 2)) },
+        },
+      });
+    }
+    case "proposeMinting":
+      return asAgent(wallet, hero, () => ({
+        kind: "propose",
+        regionId: action.regionId,
+        change: { policy: "items", value: { minting: action.minting } },
+      }));
+    case "proposeGovernance":
+      return asAgent(wallet, hero, () => ({
+        kind: "propose",
+        regionId: action.regionId,
+        change: { policy: "governance", value: { kind: "dictatorship" } },
+      }));
   }
+}
+
+async function residentIds(regionId: string): Promise<string[]> {
+  const agents = (await reads.agents()) as AgentView[];
+  return agents
+    .filter((a) => a.region === regionId && a.role !== "treasury")
+    .map((a) => a.id)
+    .sort();
 }
 
 /** Aggregate the node's read surface into the snapshot the renderer consumes. */

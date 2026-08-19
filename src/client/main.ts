@@ -164,72 +164,177 @@ function npcMenu(mob: Mob): void {
   );
 }
 
-function signMenu(village: Village): void {
+interface VillageContext {
+  readonly region: NonNullable<Snapshot["regions"][number]>;
+  readonly isOwner: boolean;
+  readonly livesHere: boolean;
+  readonly isCouncil: boolean;
+  readonly mintingOpen: boolean;
+}
+
+function villageContext(village: Village): VillageContext | null {
   const region = snapshot?.regions.find((r) => r.id === village.regionId);
-  if (!region || !snapshot) return;
+  if (!region || !snapshot) return null;
   const hero = heroAgent();
-  const isOwner = region.owner === snapshot.me.heroName;
-  const livesHere = hero?.region === region.id;
-  const mintingOpen = region.institutions.itemPolicy.minting === "anyone";
-  const entries = [
-    { label: "むらの じょうほう", value: "info" },
-    { label: "この むらに ひっこす", value: "migrate", disabled: !hero || livesHere },
-    { label: "とうひょうする", value: "vote", disabled: !region.openProposal || !livesHere },
-    { label: "どうぐを つくる", value: "mint", disabled: !(isOwner || (mintingOpen && livesHere)) },
-    { label: "いじゅうしゃを まねく", value: "admit", disabled: !isOwner },
-    { label: "おきてを かえる (どうぐ)", value: "amend", disabled: !isOwner || region.institutions.governance.kind !== "dictatorship" },
-    { label: "やめる", value: "cancel" },
-  ];
+  return {
+    region,
+    isOwner: region.owner === snapshot.me.heroName,
+    livesHere: hero?.region === region.id,
+    isCouncil: region.institutions.governance.kind === "council",
+    mintingOpen: region.institutions.itemPolicy.minting === "anyone",
+  };
+}
+
+function villageInfo(ctx: VillageContext): void {
+  const { region } = ctx;
+  const residents = snapshot?.agents.filter((a) => a.region === region.id && a.role !== "treasury") ?? [];
+  const treasury = snapshot?.agents.find((a) => a.id === `treasury@${region.id}`);
   ui.push(
-    new Menu(`${region.displayName} のたてふだ`, entries, (value) => {
-      if (value === "info") {
-        const residents = snapshot?.agents.filter((a) => a.region === region.id && a.role !== "treasury") ?? [];
-        const treasury = snapshot?.agents.find((a) => a.id === `treasury@${region.id}`);
+    new Info(`むら「${region.displayName}」(${region.id})`, [
+      `あるじ: ${region.owner ?? "なし"}  じょうたい: ${region.lifecycle}`,
+      `せいじ: ${ctx.isCouncil ? "ひょうぎかい" : "どくさいせい"}`,
+      `どうぐづくり: ${ctx.mintingOpen ? "だれでも" : "あるじのみ"}`,
+      `ぜいりつ: ${region.institutions.economyPolicy.baseCostRate} (さいてい ${region.institutions.economyPolicy.minCostRate})`,
+      `きんこ: ${treasury?.balances.currency ?? 0}G  じゅうみん: ${residents.length}にん`,
+      ...residents.map((r) => `  ${r.id} (${roleJa(r.role)}) ${r.balances.currency}G`),
+      region.openProposal ? `ひょうけつちゅう! とうひょう ${region.openProposal.votes.length}` : "ひょうけつは ない",
+    ], () => ui.pop()),
+  );
+}
+
+/** 役場 — residency and the shape of power. */
+function hallMenu(village: Village): void {
+  const ctx = villageContext(village);
+  if (!ctx) return;
+  const { region } = ctx;
+  ui.push(
+    new Menu(`${region.displayName} やくば`, [
+      { label: "むらの じょうほう", value: "info" },
+      { label: "この むらに ひっこす", value: "migrate", disabled: !heroAgent() || ctx.livesHere },
+      { label: "いじゅうしゃを まねく", value: "admit", disabled: !ctx.isOwner },
+      {
+        label: ctx.isCouncil ? "せいじたいせい (さいばんしょで ていあん)" : "ひょうぎかいせいに うつす",
+        value: "governance",
+        disabled: !ctx.isOwner || ctx.isCouncil,
+      },
+      { label: "やめる", value: "cancel" },
+    ], (value) => {
+      if (value === "info") villageInfo(ctx);
+      else if (value === "migrate") void runAct({ kind: "migrate", toRegion: region.id }, `${region.id}へ ひっこす`);
+      else if (value === "admit") {
         ui.push(
-          new Info(`むら「${region.displayName}」(${region.id})`, [
-            `あるじ: ${region.owner ?? "なし"}  じょうたい: ${region.lifecycle}`,
-            `せいじ: ${region.institutions.governance.kind === "dictatorship" ? "どくさいせい" : "ひょうぎかい"}`,
-            `どうぐづくり: ${mintingOpen ? "だれでも" : "あるじのみ"}`,
-            `ぜいりつ: ${region.institutions.economyPolicy.baseCostRate} (さいてい ${region.institutions.economyPolicy.minCostRate})`,
-            `きんこ: ${treasury?.balances.currency ?? 0}G  じゅうみん: ${residents.length}にん`,
-            ...residents.map((r) => `  ${r.id} (${roleJa(r.role)}) ${r.balances.currency}G`),
-            region.openProposal ? `ひょうけつちゅう! とうひょう ${region.openProposal.votes.length}` : "ひょうけつは ない",
-          ], () => ui.pop()),
+          new TextInput("だれを まねく? (なまえ: romaji)", { maxLen: 16 }, (agentName) => {
+            ui.push(
+              new Menu("しょくぎょうは?", [
+                { label: "しょくにん (artisan)", value: "artisan" },
+                { label: "しょうにん (merchant)", value: "merchant" },
+                { label: "なかがいにん (broker)", value: "broker" },
+              ], (role) => void runAct({ kind: "admit", agentName, region: region.id, role, currency: 50 }, `${agentName}を まねく`), () => ui.pop()),
+            );
+          }, () => ui.pop()),
         );
-      } else if (value === "migrate") {
-        void runAct({ kind: "migrate", toRegion: region.id }, `${region.id}へ ひっこす`);
-      } else if (value === "vote") {
-        void runAct({ kind: "vote", regionId: region.id }, "とうひょうする");
-      } else if (value === "mint") {
+      } else if (value === "governance") {
+        ui.push(
+          new Menu("ひょうぎかいせいに うつす? (もどすには ひょうけつが いる)", [
+            { label: "うつす", value: "yes" },
+            { label: "やめる", value: "no" },
+          ], (v) => {
+            if (v === "yes") void runAct({ kind: "amendGovernance", regionId: region.id, governance: "council" }, "せいじたいせいを かえる");
+            else ui.pop();
+          }, () => ui.pop()),
+        );
+      } else ui.clear();
+    }, () => ui.clear()),
+  );
+}
+
+/** 造幣局 — items and the rule of who may make them. */
+function mintMenu(village: Village): void {
+  const ctx = villageContext(village);
+  if (!ctx) return;
+  const { region } = ctx;
+  const treasury = snapshot?.agents.find((a) => a.id === `treasury@${region.id}`);
+  ui.push(
+    new Menu(`${region.displayName} ぞうへいきょく`, [
+      { label: "どうぐを つくる", value: "mint", disabled: !(ctx.isOwner || (ctx.mintingOpen && ctx.livesHere)) },
+      {
+        label: `どうぐづくりのおきて: ${ctx.mintingOpen ? "だれでも→あるじのみ" : "あるじのみ→だれでも"}`,
+        value: "amend",
+        disabled: !ctx.isOwner || ctx.isCouncil,
+      },
+      { label: "きんこを のぞく", value: "treasury" },
+      { label: "やめる", value: "cancel" },
+    ], (value) => {
+      if (value === "mint") {
         ui.push(
           new TextInput("なにを つくる? (romaji: sword, tsubo…)", { lowercase: true, maxLen: 16 }, (kind) => {
             const owner = snapshot?.me.agentId;
             if (owner) void runAct({ kind: "mintItem", itemKind: kind, owner }, `「${kind}」を つくる`);
           }, () => ui.pop()),
         );
-      } else if (value === "admit") {
-        ui.push(
-          new TextInput("だれを まねく? (なまえ: romaji)", { maxLen: 16 }, (agentName) => {
-            ui.push(
-              new Menu(
-                "しょくぎょうは?",
-                [
-                  { label: "しょくにん (artisan)", value: "artisan" },
-                  { label: "しょうにん (merchant)", value: "merchant" },
-                  { label: "なかがいにん (broker)", value: "broker" },
-                ],
-                (role) => void runAct({ kind: "admit", agentName, region: region.id, role, currency: 50 }, `${agentName}を まねく`),
-                () => ui.pop(),
-              ),
-            );
-          }, () => ui.pop()),
-        );
       } else if (value === "amend") {
-        const next = mintingOpen ? "owner" : "anyone";
-        void runAct({ kind: "amendMinting", regionId: region.id, minting: next }, `どうぐづくりの おきてを かえる`);
+        void runAct({ kind: "amendMinting", regionId: region.id, minting: ctx.mintingOpen ? "owner" : "anyone" }, "どうぐづくりの おきてを かえる");
+      } else if (value === "treasury") {
+        ui.push(new Info("きんこ", [`むらの きんこには ${treasury?.balances.currency ?? 0}G はいっている。`, "てすうりょうが ここに つみあがる。"], () => ui.pop()));
       } else ui.clear();
     }, () => ui.clear()),
   );
+}
+
+/** 裁判所 — proposals, votes, and the ledger of trust. */
+function courtMenu(village: Village): void {
+  const ctx = villageContext(village);
+  if (!ctx) return;
+  const { region } = ctx;
+  ui.push(
+    new Menu(`${region.displayName} さいばんしょ`, [
+      { label: "ひょうけつを みる", value: "proposal" },
+      { label: "とうひょうする", value: "vote", disabled: !region.openProposal || !ctx.livesHere },
+      { label: "おきてを ていあんする", value: "propose", disabled: !ctx.isCouncil || !ctx.livesHere || !!region.openProposal },
+      { label: "しんらいの だいちょう", value: "trust" },
+      { label: "やめる", value: "cancel" },
+    ], (value) => {
+      if (value === "proposal") {
+        ui.push(
+          new Info("ひょうけつ", region.openProposal
+            ? [
+                `ていあんしゃ: ${region.openProposal.proposedBy}`,
+                `とうひょう: ${region.openProposal.votes.length}`,
+                ...region.openProposal.votes.map((v) => `  ${v}`),
+              ]
+            : ["いま ひょうけつは ひらかれていない。", ctx.isCouncil ? "「おきてを ていあんする」で はじめられる。" : "この むらは どくさいせい — あるじが きめる。"], () => ui.pop()),
+        );
+      } else if (value === "vote") {
+        void runAct({ kind: "vote", regionId: region.id }, "とうひょうする");
+      } else if (value === "propose") {
+        ui.push(
+          new Menu("なにを ていあんする?", [
+            { label: `どうぐづくり: ${ctx.mintingOpen ? "あるじのみに もどす" : "だれでもに ひらく"}`, value: "minting" },
+            { label: "どくさいせいに もどす", value: "governance" },
+          ], (v) => {
+            if (v === "minting") {
+              void runAct({ kind: "proposeMinting", regionId: region.id, minting: ctx.mintingOpen ? "owner" : "anyone" }, "おきてを ていあんする");
+            } else {
+              void runAct({ kind: "proposeGovernance", regionId: region.id, governance: "dictatorship" }, "せいじたいせいの へんこうを ていあんする");
+            }
+          }, () => ui.pop()),
+        );
+      } else if (value === "trust") {
+        const residents = snapshot?.agents.filter((a) => a.region === region.id && a.role !== "treasury") ?? [];
+        ui.push(
+          new Info("しんらいの だいちょう", residents.length
+            ? residents.map((r) => `${r.id}: しんらい ${r.trust} / ひょうばん ${r.reputation}`)
+            : ["まだ だれも すんでいない。"], () => ui.pop()),
+        );
+      } else ui.clear();
+    }, () => ui.clear()),
+  );
+}
+
+/** The gate signboard is now just the village's public notice. */
+function signMenu(village: Village): void {
+  const ctx = villageContext(village);
+  if (ctx) villageInfo(ctx);
 }
 
 function fieldMenu(): void {
@@ -299,6 +404,18 @@ function interact(): void {
     const village = map.villages.find((v) => v.sign[0] === fx && v.sign[1] === fy);
     if (village) return signMenu(village);
   }
+  if (tile === Tile.HallDoor) {
+    const village = map.villages.find((v) => v.hall[0] === fx && v.hall[1] === fy);
+    if (village) return hallMenu(village);
+  }
+  if (tile === Tile.MintDoor) {
+    const village = map.villages.find((v) => v.mint[0] === fx && v.mint[1] === fy);
+    if (village) return mintMenu(village);
+  }
+  if (tile === Tile.CourtDoor) {
+    const village = map.villages.find((v) => v.court[0] === fx && v.court[1] === fy);
+    if (village) return courtMenu(village);
+  }
   if (tile === Tile.Chest) {
     const village = map.villages.find((v) => v.chest[0] === fx && v.chest[1] === fy);
     const treasury = snapshot.agents.find((a) => a.id === `treasury@${village?.regionId}`);
@@ -320,9 +437,26 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Enter" || e.key === " " || e.key === "z") interact();
-  else held.add(e.key);
+  else {
+    held.add(e.key);
+    // A single tap moves one tile even if the key is released before the next
+    // frame (DQ-style tap movement; held keys keep walking via update()).
+    const dir = DIRS[e.key];
+    if (dir && player.px === player.x * CELL && player.py === player.y * CELL) tryStep(dir[0], dir[1]);
+  }
 });
 window.addEventListener("keyup", (e) => held.delete(e.key));
+
+const DIRS: Record<string, readonly [number, number]> = {
+  ArrowUp: [0, -1],
+  w: [0, -1],
+  ArrowDown: [0, 1],
+  s: [0, 1],
+  ArrowLeft: [-1, 0],
+  a: [-1, 0],
+  ArrowRight: [1, 0],
+  d: [1, 0],
+};
 
 function tryStep(dx: number, dy: number): void {
   player.dx = dx;
@@ -381,7 +515,7 @@ function update(dt: number): void {
     const nx = mob.x + dx;
     const ny = mob.y + dy;
     const home = mob.home;
-    const inside = !home || (nx > home.x && nx < home.x + 17 && ny > home.y && ny < home.y + 12);
+    const inside = !home || (nx > home.x && nx < home.x + home.w - 1 && ny > home.y && ny < home.y + home.h - 1);
     if (inside && walkable(nx, ny) && !(nx === player.x && ny === player.y)) {
       mob.x = nx;
       mob.y = ny;
@@ -414,6 +548,13 @@ function render(): void {
 
   for (const village of map.villages) {
     drawText(ctx, village.displayName, village.x * CELL - camX + 8, (village.y - 1) * CELL - camY + 20, "#ffd75e");
+    ctx.font = '13px "DotGothic16", monospace';
+    ctx.fillStyle = "#ffffff";
+    const label = (text: string, at: readonly [number, number]) =>
+      ctx.fillText(text, (at[0] - 0.5) * CELL - camX + 4, (at[1] - 1) * CELL - camY - 4);
+    label("やくば", village.hall);
+    label("ぞうへい", village.mint);
+    label("さいばん", village.court);
   }
 
   for (const mob of mobs) {
@@ -475,6 +616,9 @@ async function poll(): Promise<void> {
     // The node blinked; the next poll retries. Movement should not stutter for it.
   }
 }
+
+// Debug handle (harmless in prod; lets tooling inspect position/keys).
+Object.defineProperty(window, "__vq", { value: { player, held, tile: (x: number, y: number) => (map ? tileAt(map, x, y) : -1), solid: (x: number, y: number) => (map ? isSolid(map, x, y) : true) }, configurable: true });
 
 let last = performance.now();
 function frame(now: number): void {

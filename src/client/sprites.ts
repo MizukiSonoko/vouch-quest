@@ -37,6 +37,9 @@ const PALETTE: Record<string, string> = {
   v: "#7a3fa8", // broker purple
   a: "#2c8a4a", // artisan green
   m: "#6a6a6a", // stone gray
+  n: "#24408e", // hall roof navy
+  N: "#4a6fe0", // hall roof light
+  q: "#b8860b", // mint roof gold-dark
 };
 
 function draw(rows: readonly string[], scale = SCALE): HTMLCanvasElement {
@@ -146,6 +149,51 @@ const DOOR = WALL.map((row, y) => {
   return `${row.slice(0, 4)}xkkkkkkkx${row.slice(13)}`.slice(0, 16);
 });
 
+const ROCK = [
+  "gggggggggggggggg",
+  "gggggggggggggggg",
+  "ggggggmmmmgggggg",
+  "gggggmmmmmmggggg",
+  "ggggmmeemmmmgggg",
+  "gggmmmemmmmmmggg",
+  "gggmmmmmmmmmmggg",
+  "ggmmmmmmmmmmmmgg",
+  "ggmmmmmmmmxmmmgg",
+  "ggmmmmmmmmmmmmgg",
+  "ggxmmmmmmmmmmxgg",
+  "gggxxmmmmmmxxggg",
+  "gggggxxxxxxggggg",
+  "gggGgggggggdgggg",
+  "gggggggggggggggg",
+  "gggggggggggggggg",
+];
+
+const FLOWER = [
+  "gggggggggggggggg",
+  "ggGggggggggdgggg",
+  "gggggeegggggggg".slice(0, 16).padEnd(16, "g"),
+  "ggggeyyegggggggg",
+  "gggggeegggggggg".padEnd(16, "g").slice(0, 16),
+  "gggggttggggeeggg",
+  "ggdggttgggeyyegg",
+  "gggggggggggeeggg",
+  "ggeeggggggggttgg",
+  "geyyeggGggggttgg",
+  "ggeegggggggggggg",
+  "ggttgggggggggggg",
+  "ggttggggdggggggg",
+  "gggggggggggggggg",
+  "ggGggggggggGgggg",
+  "gggggggggggggggg",
+];
+
+/** Roof recolor for civic buildings: swap the shingle colors. */
+const roofIn = (dark: string, light: string): string[] => ROOF.map((row) => row.replaceAll("r", dark).replaceAll("R", light));
+
+/** A door with a colored emblem band — the civic building's "sign" over the lintel. */
+const doorWith = (emblem: string): string[] =>
+  DOOR.map((row, y) => (y === 5 || y === 6 ? `${row.slice(0, 5)}${emblem.repeat(7)}${row.slice(12)}` : row));
+
 const SIGN = [
   "gggggggggggggggg",
   "gggggggggggggggg",
@@ -235,6 +283,14 @@ export function buildSprites(): SpriteSet {
     [Tile.HouseDoor, draw(DOOR)],
     [Tile.Sign, draw(SIGN)],
     [Tile.Chest, draw(CHEST)],
+    [Tile.HallRoof, draw(roofIn("n", "N"))],
+    [Tile.HallDoor, draw(doorWith("N"))],
+    [Tile.MintRoof, draw(roofIn("q", "y"))],
+    [Tile.MintDoor, draw(doorWith("y"))],
+    [Tile.CourtRoof, draw(roofIn("m", "e"))],
+    [Tile.CourtDoor, draw(doorWith("e"))],
+    [Tile.Rock, draw(ROCK)],
+    [Tile.Flower, draw(FLOWER)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   return {
