@@ -5,6 +5,7 @@
 // Every action becomes a signed command; every world event scrolls the newspaper.
 
 import type { AgentView, ItemView, LogEventView, Snapshot } from "../shared";
+import { dayPhase, ParticleField, Wildlife } from "./ambience";
 import { npcLines } from "./dialogue";
 import { eventToMessage } from "./feed";
 import { buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, type WorldMap } from "./map";
@@ -23,6 +24,16 @@ ctx.imageSmoothingEnabled = false;
 const sprites = buildSprites();
 const ui = new UiStack();
 const log = new MessageLog();
+const particles = new ParticleField();
+const wildlife = new Wildlife();
+let scene: "title" | "game" = "title";
+let banner: { text: string; until: number } | null = null;
+let tickerText = "";
+let tickerX = 0;
+let nextGoal = "";
+let camXg = 0;
+let camYg = 0;
+const pendingCelebrations: LogEventView[] = [];
 
 interface Mob {
   readonly agent: AgentView;
@@ -93,6 +104,14 @@ async function refreshWorld(repositionHero: boolean): Promise<void> {
     target: null,
     bubble: null,
   }));
+  const flowers: (readonly [number, number])[] = [];
+  for (let fy = 0; fy < MAP_H; fy++) {
+    for (let fx = 0; fx < MAP_W; fx++) {
+      if (tileAt(map, fx, fy) === Tile.Flower) flowers.push([fx * CELL + 16, fy * CELL + 8] as const);
+    }
+  }
+  wildlife.seedButterflies(flowers);
+  rebuildTicker();
   if (repositionHero || isSolid(map, player.x, player.y)) {
     const [sx, sy] = heroSpawn(snap, map);
     player.x = sx;
@@ -113,8 +132,97 @@ async function syncEvents(announce: boolean): Promise<boolean> {
   const fresh = (await fetchAllLog(allEvents.length)).filter((e) => e.seq >= allEvents.length);
   if (fresh.length === 0) return false;
   allEvents.push(...fresh);
-  if (announce) for (const event of fresh) log.push(`▶ ${eventToMessage(event)}`);
+  if (announce) {
+    for (const event of fresh) {
+      log.push(`▶ ${eventToMessage(event)}`);
+      pendingCelebrations.push(event);
+    }
+  }
   return true;
+}
+
+function pick(payload: unknown, ...paths: string[]): string | null {
+  for (const path of paths) {
+    let v: unknown = payload;
+    for (const key of path.split(".")) v = typeof v === "object" && v !== null ? (v as Record<string, unknown>)[key] : undefined;
+    if (typeof v === "string") return v;
+  }
+  return null;
+}
+
+function villageCenterPx(regionId: string | null): readonly [number, number] | null {
+  const v = regionId ? map?.villages.find((x) => x.regionId === regionId) : null;
+  return v ? ([(v.x + v.w / 2) * CELL, (v.y + v.h / 2) * CELL] as const) : null;
+}
+
+function regionOfAgent(agentId: string | null): string | null {
+  return agentId ? (snapshot?.agents.find((a) => a.id === agentId)?.region ?? agentId.split("@")[1] ?? null) : null;
+}
+
+/** Stage each fresh world event: fireworks for foundings, sparkles for the rest. */
+function celebrate(): void {
+  const now = performance.now();
+  for (const e of pendingCelebrations.splice(0)) {
+    const p = e.payload;
+    switch (e.type) {
+      case "region.founded": {
+        const at = villageCenterPx(pick(p, "region.id"));
+        if (at) particles.firework(at[0], at[1]);
+        banner = { text: eventToMessage(e), until: now + 4200 };
+        se("fanfare");
+        break;
+      }
+      case "economy.settled": {
+        const entries = (p["entries"] as { agentId?: string }[] | undefined) ?? [];
+        const at = villageCenterPx(regionOfAgent(entries[0]?.agentId ?? null));
+        if (at) particles.sparkle(at[0], at[1], "#ffd75e");
+        break;
+      }
+      case "agent.vouched": {
+        const at = villageCenterPx(regionOfAgent(pick(p, "to")));
+        if (at) particles.sparkle(at[0], at[1], "#ff9de2");
+        break;
+      }
+      case "item.minted":
+      case "item.transferred": {
+        const at = villageCenterPx(regionOfAgent(pick(p, "owner", "to")));
+        if (at) particles.sparkle(at[0], at[1], "#6ad2ff");
+        break;
+      }
+      case "agent.admitted":
+      case "agent.migrated": {
+        const at = villageCenterPx(pick(p, "admission.region", "toRegion"));
+        if (at) particles.sparkle(at[0], at[1], "#a5ff8a");
+        banner = { text: eventToMessage(e), until: now + 3200 };
+        break;
+      }
+      case "region.institution.changed":
+      case "gov.proposal.opened":
+      case "gov.vote.cast": {
+        const at = villageCenterPx(pick(p, "regionId"));
+        if (at) particles.sparkle(at[0], at[1], "#8fd0ff");
+        banner = { text: eventToMessage(e), until: now + 3200 };
+        break;
+      }
+    }
+  }
+}
+
+/** The かわらばん: real headlines that scroll along the top of the screen. */
+function rebuildTicker(): void {
+  if (!snapshot) return;
+  const folk = snapshot.agents.filter((a) => a.role !== "treasury");
+  const richest = [...folk].sort((a, b) => b.balances.currency - a.balances.currency)[0];
+  const trusted = [...folk].sort((a, b) => b.trust - a.trust)[0];
+  const newest = snapshot.regions[snapshot.regions.length - 1];
+  const items = [
+    ...allEvents.slice(-4).map((e) => eventToMessage(e)),
+    richest ? `ちょうじゃ: ${richest.id} (${richest.balances.currency}G)` : "",
+    trusted && trusted.trust > 0 ? `しんらいNo.1: ${trusted.id} (しんらい${trusted.trust})` : "",
+    newest ? `さいしんのむら: ${newest.displayName}` : "",
+    `むら${snapshot.regions.length} / じゅうみん${folk.length}にん / できごと${snapshot.logLength}`,
+  ].filter((t) => t.length > 0);
+  tickerText = items.join("  ◆  ");
 }
 
 let title = "かけだしの たびびと";
@@ -135,6 +243,9 @@ function checkQuests(announce: boolean): void {
   if (announce && questsDone.size === questProgress(ctx).length) {
     log.push("すべての クエストを なしとげた! あなたこそ でんせつの ゆうしゃだ!");
   }
+  const undone = questProgress(ctx).find((q) => !q.done);
+  nextGoal = undone ? `つぎ: ${undone.quest.title} — ${undone.quest.desc}` : "でんせつ かんせい!";
+  rebuildTicker();
 }
 
 // ---- actions -------------------------------------------------------------
@@ -146,9 +257,10 @@ async function runAct(action: Record<string, unknown>, doing: string): Promise<v
     const result = await postAct(action);
     if (result.ok) {
       se("coin");
-      await refreshWorld(false);
       await syncEvents(true);
+      await refreshWorld(false);
       checkQuests(true);
+      celebrate();
     } else {
       se("error");
       log.push(`だめだった… (${result.reason})`);
@@ -707,6 +819,14 @@ function roleJa(role: string): string {
 window.addEventListener("keydown", (e) => {
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) e.preventDefault();
   startAudio();
+  if (scene === "title") {
+    if (e.key === "Enter" || e.key === " " || e.key === "z") {
+      scene = "game";
+      se("confirm");
+      onboard();
+    }
+    return;
+  }
   if (ui.active) {
     if (e.key === "ArrowUp" || e.key === "ArrowDown") se("cursor");
     else if (e.key === "Enter" || e.key === " " || e.key === "z") se("confirm");
@@ -764,6 +884,9 @@ function tryStep(dx: number, dy: number): void {
 // ---- update / render -------------------------------------------------------
 
 function update(dt: number): void {
+  particles.update(dt);
+  wildlife.update(dt, canvas.width, canvas.height, camXg, camYg);
+  tickerX -= dt * 0.06;
   // Player: tween toward the target tile; accept a new step when settled.
   const tx = player.x * CELL;
   const ty = player.y * CELL;
@@ -883,13 +1006,18 @@ function render(): void {
 
   const camX = Math.max(0, Math.min(player.px - w / 2 + CELL / 2, MAP_W * CELL - w));
   const camY = Math.max(0, Math.min(player.py - h / 2 + CELL / 2, MAP_H * CELL - h));
+  camXg = camX;
+  camYg = camY;
   const x0 = Math.floor(camX / CELL);
   const y0 = Math.floor(camY / CELL);
 
+  const lights: (readonly [number, number])[] = [];
   for (let y = y0; y <= y0 + Math.ceil(h / CELL); y++) {
     for (let x = x0; x <= x0 + Math.ceil(w / CELL); x++) {
-      const sprite = sprites.tiles.get(tileAt(map, x, y));
+      const t = tileAt(map, x, y);
+      const sprite = sprites.tiles.get(t);
       if (sprite) ctx.drawImage(sprite, x * CELL - camX, y * CELL - camY);
+      if (t === Tile.Lamp || t === Tile.WallWindow || t === Tile.WallWoodWindow) lights.push([x, y] as const);
     }
   }
 
@@ -939,17 +1067,86 @@ function render(): void {
   const heroPair = sprites.heroFor(titleTier(title));
   ctx.drawImage(heroPair[player.frame === 0 ? 0 : 1], player.px - camX, player.py - camY);
 
+  wildlife.render(ctx, camX, camY);
+  particles.render(ctx, camX, camY);
+
+  // Day-night mood, with lamps and windows glowing after dark.
+  const phase = dayPhase();
+  if (phase.tint) {
+    ctx.fillStyle = phase.tint;
+    ctx.fillRect(0, 0, w, h);
+  }
+  if (phase.night) {
+    ctx.globalCompositeOperation = "lighter";
+    for (const [lx, ly] of lights) {
+      const gx2 = lx * CELL - camX + CELL / 2;
+      const gy2 = ly * CELL - camY + CELL / 2;
+      const grad = ctx.createRadialGradient(gx2, gy2, 4, gx2, gy2, 70);
+      grad.addColorStop(0, "rgba(255, 214, 110, 0.30)");
+      grad.addColorStop(1, "rgba(255, 214, 110, 0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(gx2 - 70, gy2 - 70, 140, 140);
+    }
+    ctx.globalCompositeOperation = "source-over";
+  }
+
   // HUD
   const hero = heroAgent();
-  drawWindow(ctx, 12, 12, 264, hero ? 164 : 66);
-  drawText(ctx, snapshot.me.heroName ?? "ななしの たびびと", 32, 28, "#ffd75e");
+  drawWindow(ctx, 12, 40, 264, hero ? 164 : 66);
+  drawText(ctx, snapshot.me.heroName ?? "ななしの たびびと", 32, 56, "#ffd75e");
   if (hero) {
     ctx.font = '15px "DotGothic16", monospace';
     ctx.fillStyle = "#8fd0ff";
-    ctx.fillText(title, 32, 56);
-    drawText(ctx, `G: ${hero.balances.currency}`, 32, 80);
-    drawText(ctx, `しんらい: ${hero.trust}`, 32, 106);
-    drawText(ctx, `ひょうばん: ${hero.reputation}`, 32, 132);
+    ctx.fillText(title, 32, 84);
+    drawText(ctx, `G: ${hero.balances.currency}`, 32, 108);
+    drawText(ctx, `しんらい: ${hero.trust}`, 32, 134);
+    drawText(ctx, `ひょうばん: ${hero.reputation}`, 32, 160);
+  }
+
+  // かわらばん — the scrolling headline bar.
+  if (tickerText.length > 0) {
+    ctx.fillStyle = "rgba(0, 6, 20, 0.82)";
+    ctx.fillRect(0, 0, w, 30);
+    ctx.font = '16px "DotGothic16", monospace';
+    const label = "かわらばん ▶ ";
+    ctx.fillStyle = "#ffd75e";
+    ctx.fillText(label, 10, 21);
+    const labelW = ctx.measureText(label).width + 16;
+    const textW = ctx.measureText(tickerText).width + 120;
+    if (tickerX < -textW) tickerX = w - labelW;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(labelW, 0, w - labelW, 30);
+    ctx.clip();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(tickerText, labelW + tickerX, 21);
+    ctx.fillText(tickerText, labelW + tickerX + textW, 21);
+    ctx.restore();
+  }
+
+  // つぎのもくひょう — so there is always a reason to take the next step.
+  if (nextGoal.length > 0 && !ui.active) {
+    ctx.font = '15px "DotGothic16", monospace';
+    const gw = ctx.measureText(nextGoal).width + 30;
+    drawWindow(ctx, w - gw - 12, 40, gw, 44);
+    ctx.fillStyle = "#a5ff8a";
+    ctx.fillText(nextGoal, w - gw + 3, 66);
+  }
+
+  // 速報バナー — big news floats center-screen for a few seconds.
+  if (banner) {
+    const remain = banner.until - performance.now();
+    if (remain <= 0) banner = null;
+    else {
+      ctx.globalAlpha = Math.min(1, remain / 600);
+      ctx.font = '22px "DotGothic16", monospace';
+      const bw = ctx.measureText(banner.text).width + 56;
+      drawWindow(ctx, (w - bw) / 2, 96, bw, 56);
+      ctx.font = '22px "DotGothic16", monospace';
+      ctx.fillStyle = "#ffd75e";
+      ctx.fillText(banner.text, (w - bw) / 2 + 28, 131);
+      ctx.globalAlpha = 1;
+    }
   }
 
   log.render(ctx, w, h);
@@ -989,6 +1186,7 @@ async function poll(): Promise<void> {
     if (await syncEvents(true)) {
       await refreshWorld(false);
       checkQuests(true);
+      celebrate();
     }
   } catch {
     // The node blinked; the next poll retries. Movement should not stutter for it.
@@ -998,8 +1196,70 @@ async function poll(): Promise<void> {
 // Debug handle (harmless in prod; lets tooling inspect position/keys).
 Object.defineProperty(window, "__vq", { value: { player, held, mobs: () => mobs.map((m) => [m.agent.id, m.x, m.y, Math.round(m.timer), m.target]), tile: (x: number, y: number) => (map ? tileAt(map, x, y) : -1), solid: (x: number, y: number) => (map ? isSolid(map, x, y) : true) }, configurable: true });
 
+function renderTitle(): void {
+  if (!ctx) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.fillStyle = "#000610";
+  ctx.fillRect(0, 0, w, h);
+  if (map) {
+    ctx.globalAlpha = 0.3;
+    const mini = miniMapCanvas(map);
+    ctx.drawImage(mini, (w - mini.width * 1.4) / 2, (h - mini.height * 1.4) / 2, mini.width * 1.4, mini.height * 1.4);
+    ctx.globalAlpha = 1;
+  }
+  ctx.textBaseline = "top";
+  ctx.font = '72px "DotGothic16", monospace';
+  const titleText = "VOUCH QUEST";
+  const tw = ctx.measureText(titleText).width;
+  ctx.fillStyle = "#000";
+  ctx.fillText(titleText, (w - tw) / 2 + 4, 124);
+  ctx.fillStyle = "#ffd75e";
+  ctx.fillText(titleText, (w - tw) / 2, 120);
+  ctx.font = '20px "DotGothic16", monospace';
+  const sub = "〜 しんらいと むらむらの ものがたり 〜";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(sub, (w - ctx.measureText(sub).width) / 2, 210);
+
+  if (snapshot) {
+    const folk = snapshot.agents.filter((a) => a.role !== "treasury").length;
+    const stats = `いま この せかいには — むら ${snapshot.regions.length} / じゅうみん ${folk}にん / できごと ${snapshot.logLength}`;
+    ctx.fillStyle = "#8fd0ff";
+    ctx.fillText(stats, (w - ctx.measureText(stats).width) / 2, 270);
+    ctx.font = '17px "DotGothic16", monospace';
+    ctx.fillStyle = "#c9d4e8";
+    allEvents.slice(-3).reverse().forEach((e, i) => {
+      const line = `◆ ${eventToMessage(e)}`;
+      ctx.fillText(line, (w - ctx.measureText(line).width) / 2, 316 + i * 30);
+    });
+  } else {
+    ctx.fillStyle = "#c9d4e8";
+    const loading = "せかいを よみこんでいる…";
+    ctx.fillText(loading, (w - ctx.measureText(loading).width) / 2, 280);
+  }
+
+  if (Math.floor(performance.now() / 500) % 2 === 0) {
+    ctx.font = '26px "DotGothic16", monospace';
+    const press = "PRESS ENTER";
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(press, (w - ctx.measureText(press).width) / 2, 448);
+  }
+  ctx.font = '15px "DotGothic16", monospace';
+  ctx.fillStyle = "#7a879c";
+  const help = "やじるし:あるく  Shift:ダッシュ  Enter:しらべる  M:ちず  L:ログ";
+  ctx.fillText(help, (w - ctx.measureText(help).width) / 2, 520);
+  const note = `${dayPhase().label}の せかいが まっている — あなたの いっぽも れきしに きざまれる`;
+  ctx.fillText(note, (w - ctx.measureText(note).width) / 2, 552);
+}
+
 let last = performance.now();
 function frame(now: number): void {
+  if (scene === "title") {
+    renderTitle();
+    last = now;
+    requestAnimationFrame(frame);
+    return;
+  }
   update(Math.min(now - last, 100));
   last = now;
   render();
@@ -1011,7 +1271,7 @@ void (async () => {
     await refreshWorld(true);
     allEvents = await fetchAllLog();
     checkQuests(false);
-    onboard();
+    rebuildTicker();
   } catch (error) {
     log.push(error instanceof Error ? error.message : "せかいに つながらない…");
     log.push("SSHトンネルと ゲームサーバーを かくにんしてね。");

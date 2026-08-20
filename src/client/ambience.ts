@@ -1,0 +1,188 @@
+// Ambience: the layer that makes the world feel alive without touching it.
+// Particles celebrate real events, birds and butterflies fill the quiet, and a
+// day-night tint follows the player's real clock. Pure presentation — nothing
+// here reads or writes world state.
+
+export interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  size: number;
+  gravity: number;
+}
+
+export class ParticleField {
+  private readonly list: Particle[] = [];
+
+  /** A firework burst in world pixels — for foundings and other big news. */
+  firework(x: number, y: number): void {
+    const colors = ["#ffd75e", "#ff6a5e", "#6ad2ff", "#a5ff8a", "#ff9de2"];
+    for (let burst = 0; burst < 3; burst++) {
+      const bx = x + (burst - 1) * 40;
+      const by = y - burst * 26;
+      const color = colors[(burst * 2) % colors.length] ?? "#ffd75e";
+      for (let i = 0; i < 26; i++) {
+        const angle = (Math.PI * 2 * i) / 26;
+        const speed = 1.2 + Math.random() * 1.6;
+        this.list.push({
+          x: bx,
+          y: by,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 900 + burst * 250 + Math.random() * 300,
+          maxLife: 1400,
+          color,
+          size: 4,
+          gravity: 0.02,
+        });
+      }
+    }
+  }
+
+  /** A soft upward sparkle in world pixels — trades, vouches, mints. */
+  sparkle(x: number, y: number, color = "#ffd75e"): void {
+    for (let i = 0; i < 10; i++) {
+      this.list.push({
+        x: x + Math.random() * 48,
+        y: y + Math.random() * 24,
+        vx: (Math.random() - 0.5) * 0.6,
+        vy: -0.5 - Math.random() * 0.8,
+        life: 700 + Math.random() * 400,
+        maxLife: 1100,
+        color,
+        size: 3,
+        gravity: 0,
+      });
+    }
+  }
+
+  update(dt: number): void {
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const p = this.list[i];
+      if (!p) continue;
+      p.life -= dt;
+      if (p.life <= 0) {
+        this.list.splice(i, 1);
+        continue;
+      }
+      p.x += p.vx * (dt / 16.7);
+      p.y += p.vy * (dt / 16.7);
+      p.vy += p.gravity * (dt / 16.7);
+    }
+  }
+
+  render(ctx: CanvasRenderingContext2D, camX: number, camY: number): void {
+    for (const p of this.list) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.life / p.maxLife));
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - camX, p.y - camY, p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// --- birds and butterflies ----------------------------------------------------
+
+interface Bird {
+  x: number;
+  y: number;
+  vx: number;
+}
+
+interface Butterfly {
+  x: number;
+  y: number;
+  phase: number;
+  homeX: number;
+  homeY: number;
+}
+
+export class Wildlife {
+  private readonly birds: Bird[] = [];
+  private readonly butterflies: Butterfly[] = [];
+  private birdTimer = 3000;
+
+  /** Seed butterflies at (world-pixel) flower positions; call after a map build. */
+  seedButterflies(flowers: readonly (readonly [number, number])[]): void {
+    this.butterflies.length = 0;
+    const picks = [...flowers].sort(() => Math.random() - 0.5).slice(0, 14);
+    for (const [fx, fy] of picks) {
+      this.butterflies.push({ x: fx, y: fy, phase: Math.random() * Math.PI * 2, homeX: fx, homeY: fy });
+    }
+  }
+
+  update(dt: number, viewW: number, viewH: number, camX: number, camY: number): void {
+    this.birdTimer -= dt;
+    if (this.birdTimer <= 0) {
+      this.birdTimer = 6000 + Math.random() * 9000;
+      const leftToRight = Math.random() < 0.5;
+      this.birds.push({
+        x: camX + (leftToRight ? -30 : viewW + 30),
+        y: camY + 30 + Math.random() * (viewH * 0.5),
+        vx: (leftToRight ? 1 : -1) * (1.6 + Math.random()),
+      });
+    }
+    for (let i = this.birds.length - 1; i >= 0; i--) {
+      const b = this.birds[i];
+      if (!b) continue;
+      b.x += b.vx * (dt / 16.7);
+      if (b.x < camX - 80 || b.x > camX + viewW + 80) this.birds.splice(i, 1);
+    }
+    for (const f of this.butterflies) {
+      f.phase += dt / 300;
+      f.x = f.homeX + Math.cos(f.phase) * 20 + Math.sin(f.phase * 2.3) * 8;
+      f.y = f.homeY + Math.sin(f.phase * 1.7) * 14;
+    }
+  }
+
+  render(ctx: CanvasRenderingContext2D, camX: number, camY: number): void {
+    const flap = Math.floor(performance.now() / 180) % 2;
+    ctx.fillStyle = "#222";
+    for (const b of this.birds) {
+      const x = b.x - camX;
+      const y = b.y - camY;
+      if (flap === 0) {
+        ctx.fillRect(x - 5, y - 3, 4, 2);
+        ctx.fillRect(x + 1, y - 3, 4, 2);
+        ctx.fillRect(x - 2, y - 1, 4, 2);
+      } else {
+        ctx.fillRect(x - 5, y, 4, 2);
+        ctx.fillRect(x + 1, y, 4, 2);
+        ctx.fillRect(x - 2, y - 1, 4, 2);
+      }
+    }
+    for (const f of this.butterflies) {
+      const x = f.x - camX;
+      const y = f.y - camY;
+      const open = Math.floor(performance.now() / 140 + f.phase * 10) % 2 === 0;
+      ctx.fillStyle = "#ffd6f0";
+      if (open) {
+        ctx.fillRect(x - 3, y, 3, 3);
+        ctx.fillRect(x + 1, y, 3, 3);
+      } else {
+        ctx.fillRect(x - 1, y, 3, 3);
+      }
+    }
+  }
+}
+
+// --- day-night ------------------------------------------------------------------
+
+export interface DayPhase {
+  readonly tint: string | null;
+  readonly night: boolean;
+  readonly label: string;
+}
+
+/** The player's real clock sets the mood: dusk, lamplit night, dawn, day. */
+export function dayPhase(now = new Date()): DayPhase {
+  const h = now.getHours() + now.getMinutes() / 60;
+  if (h >= 19 || h < 5) return { tint: "rgba(12, 14, 60, 0.38)", night: true, label: "よる" };
+  if (h >= 17) return { tint: "rgba(255, 120, 40, 0.16)", night: false, label: "ゆうぐれ" };
+  if (h < 6.5) return { tint: "rgba(140, 150, 220, 0.20)", night: false, label: "よあけ" };
+  return { tint: null, night: false, label: "ひるま" };
+}
