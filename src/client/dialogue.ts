@@ -13,10 +13,34 @@ function pick<T>(seedText: string, pool: readonly T[]): T {
 }
 
 const GREETINGS: Record<string, readonly string[]> = {
-  artisan: ["やあ、いいしごとしてるかい?", "きょうも こつこつ つくるのさ。", "しょくにんは うでが すべてさ。"],
-  merchant: ["いらっしゃい! なにか かうかい?", "しょうばいは しんようだいいち!", "やすくしとくよ、みてって!"],
-  broker: ["じょうほうなら まかせな。", "とりひきの なかだちは わたしのしごと。", "かねの ながれは よどまぬものさ。"],
+  artisan: [
+    "やあ、いいしごとしてるかい?",
+    "きょうも こつこつ つくるのさ。",
+    "しょくにんは うでが すべてさ。",
+    "けずって みがいて はや ん十ねん。",
+    "どうぐは うらぎらない。ひとと ちがってな。",
+    "この まちの かなものは ぜんぶ わしの しごとさ。",
+  ],
+  merchant: [
+    "いらっしゃい! なにか かうかい?",
+    "しょうばいは しんようだいいち!",
+    "やすくしとくよ、みてって!",
+    "となりまちの そうばは しってるかい?",
+    "きょうは でんしゃで しいれてきたんだ。",
+    "ぜいりつが さがれば もっと やすくできるんだがねえ。",
+  ],
+  broker: [
+    "じょうほうなら まかせな。",
+    "とりひきの なかだちは わたしのしごと。",
+    "かねの ながれは よどまぬものさ。",
+    "ぎんこうの りしは 1わり。おぼえておきな。",
+    "しんらいが あれば てすうりょうは やすくなる。これ ほんとう。",
+    "うわさじゃ どこかの むらが がっぺいされるらしい…",
+  ],
 };
+
+const CHILD_TALK = ["あそぼー!", "おとな って いそがしそう!", "おおきくなったら しょうにんに なるんだ!", "ねえねえ、スライム みたことある?"];
+const ELDER_TALK = ["わしが わかいころは むらに さくも なかったよ…", "ながいきの ひけつは まいにちの さんぽじゃ。", "この むらの れきしは ぜんぶ みてきた。", "そろそろ おむかえが くるかのう…"];
 
 const BIOME_TALK: Readonly<Record<Biome, readonly string[]>> = {
   [Biome.Plains]: ["ここらは のどかで いいところさ。", "かぜが きもちいい ひだね。"],
@@ -26,11 +50,20 @@ const BIOME_TALK: Readonly<Record<Biome, readonly string[]>> = {
   [Biome.Swamp]: ["ぬまの ゆうぐれは うつくしいぞ… みたことあるか?", "カエルの こえを かぞえていたら あさになった。"],
 };
 
-export function npcLines(agent: AgentView, worldItems: readonly ItemView[], regionOwner: string | null, biome: Biome = Biome.Plains): string[] {
+export function npcLines(
+  agent: AgentView,
+  worldItems: readonly ItemView[],
+  regionOwner: string | null,
+  biome: Biome = Biome.Plains,
+  age = 500,
+  isChild = false,
+): string[] {
   const lines: string[] = [];
   const seed = agent.id;
 
-  lines.push(pick(seed, GREETINGS[agent.role] ?? ["こんにちは、たびのかた。"]));
+  if (isChild) lines.push(pick(seed, CHILD_TALK));
+  else if (age > 800) lines.push(pick(seed, ELDER_TALK));
+  else lines.push(pick(seed, GREETINGS[agent.role] ?? ["こんにちは、たびのかた。"]));
   lines.push(pick(`${seed}b`, BIOME_TALK[biome]));
 
   const gold = agent.balances.currency;

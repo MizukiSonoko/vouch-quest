@@ -59,6 +59,9 @@ export const enum Tile {
   Poster = 40,
   HospitalRoof = 41,
   HospitalDoor = 42,
+  Airport = 43,
+  Plant = 44,
+  Substation = 45,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -96,6 +99,9 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.Poster,
   Tile.HospitalRoof,
   Tile.HospitalDoor,
+  Tile.Airport,
+  Tile.Plant,
+  Tile.Substation,
 ]);
 
 /** Village slot origins (top-left), a 5x6 lattice spaced for the largest plot (20x15). */
@@ -115,6 +121,13 @@ export interface Village {
   readonly tier: number;
   /** The train station platform, if this settlement grew into a city. */
   readonly station: readonly [number, number] | null;
+  /** The airport terminal, once the settlement is a metropolis. */
+  readonly airport: readonly [number, number] | null;
+  /** The power plant (metropolis) and substation (town+); electricity follows. */
+  readonly plant: readonly [number, number] | null;
+  readonly substation: readonly [number, number] | null;
+  /** Whether the settlement is on the grid (a plant is in transmission range). */
+  powered: boolean;
   readonly x: number;
   readonly y: number;
   readonly w: number;
@@ -135,6 +148,8 @@ export interface Village {
   readonly hospital: readonly [number, number] | null;
   /** Interior spawn points for resident NPCs. */
   readonly spots: readonly (readonly [number, number])[];
+  /** Front doors of the resident houses (enterable), in resident order. */
+  readonly homes: readonly (readonly [number, number])[];
 }
 
 export interface WorldMap {
@@ -144,10 +159,15 @@ export interface WorldMap {
   readonly rails: readonly (readonly (readonly [number, number])[])[];
   /** Road polylines between friendly villages — the caravans travel these. */
   readonly roads: readonly (readonly (readonly [number, number])[])[];
+  /** Highway polylines between friendly CITIES — trucks thunder along these. */
+  readonly highways: readonly (readonly (readonly [number, number])[])[];
+  /** Transmission lines: [plant, substation] endpoint pairs, in tile coords. */
+  readonly powerLines: readonly (readonly [readonly [number, number], readonly [number, number]])[];
 }
 
 /** How far a settlement has developed, from its REAL population and treasury. */
 export function devTier(residents: number, treasury: number): number {
+  if (residents >= 12 || treasury >= 200) return 3; // metropolis: airport-grade
   if (residents >= 6 || treasury >= 80) return 2;
   if (residents >= 4 || treasury >= 25) return 1;
   return 0;
@@ -494,12 +514,14 @@ function carveVillage(
   }
   // Keep only doors that survived later construction, and clear each doorstep.
   const spots: (readonly [number, number])[] = [];
+  const homes: (readonly [number, number])[] = [];
   for (const { door, tile } of houseDoors) {
     if (get(tiles, door[0], door[1]) !== tile) continue;
     const front: readonly [number, number] = [door[0], door[1] + 1];
     if (!inside(front[0], front[1]) || protectedCells.has(key(front[0], front[1]))) continue;
     set(tiles, front[0], front[1], g1);
     spots.push(front);
+    homes.push(door);
   }
 
   const isFree = (x: number, y: number): boolean => {
@@ -599,7 +621,39 @@ function carveVillage(
     set(tiles, station[0] + 1, station[1], Tile.Pavement);
   }
 
-  return { x: vx, y: vy, w, h, biome, cells, tier, station, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, hospital, spots };
+  // A metropolis builds an airport out past the other side of the gate.
+  let airport: readonly [number, number] | null = null;
+  if (tier >= 3) {
+    let ay = gy + 2;
+    while (inCells(gx - 4, ay) && ay < MAP_H - 3) ay++;
+    airport = [Math.max(3, gx - 4), ay] as const;
+    set(tiles, airport[0], airport[1], Tile.Airport);
+    set(tiles, airport[0] - 1, airport[1], Tile.Pavement);
+    set(tiles, airport[0] + 1, airport[1], Tile.Pavement);
+  }
+
+  // Electricity: a metropolis runs a power plant on its outskirts; any town keeps
+  // a substation waiting for the grid to reach it.
+  let plant: readonly [number, number] | null = null;
+  if (tier >= 3) {
+    let py2 = gy + 2;
+    while (inCells(gx - 7, py2) && py2 < MAP_H - 3) py2++;
+    plant = [Math.max(3, gx - 7), py2] as const;
+    set(tiles, plant[0], plant[1], Tile.Plant);
+  }
+  let substation: readonly [number, number] | null = null;
+  if (tier >= 1) {
+    for (let tries = 0; tries < 60 && !substation; tries++) {
+      const sx2 = vx + 2 + Math.floor(rng() * Math.max(1, w - 4));
+      const sy2 = vy + 2 + Math.floor(rng() * Math.max(1, h - 4));
+      if (isFree(sx2, sy2)) {
+        substation = [sx2, sy2] as const;
+        set(tiles, sx2, sy2, Tile.Substation);
+      }
+    }
+  }
+
+  return { x: vx, y: vy, w, h, biome, cells, tier, station, airport, plant, substation, powered: false, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, hospital, spots, homes };
 }
 
 export function buildMap(snapshot: Snapshot): WorldMap {
@@ -681,6 +735,36 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     if (path.length > 3) roads.push(path);
   }
 
+  // Highways: friendly pairs where BOTH sides are cities get a two-lane artery.
+  const highways: (readonly [number, number])[][] = [];
+  for (const [aId, bId] of friendlyPairs(snapshot.regions)) {
+    const a = villages.find((v) => v.regionId === aId);
+    const b = villages.find((v) => v.regionId === bId);
+    if (!a || !b || a.tier < 2 || b.tier < 2) continue;
+    const laneY = Math.max(a.gate[1], b.gate[1]) + 4;
+    const path: (readonly [number, number])[] = [];
+    const paveWide = (x: number, y: number): void => {
+      for (const yy of [y, y + 1]) {
+        if (x < 2 || yy < 2 || x >= MAP_W - 2 || yy >= MAP_H - 2 || inAnyPlot2(x, yy)) continue;
+        set(tiles, x, yy, Tile.Pavement);
+      }
+    };
+    for (let y = a.gate[1] + 1; y <= laneY; y++) {
+      paveWide(a.gate[0], y);
+      path.push([a.gate[0], y] as const);
+    }
+    const dirX = Math.sign(b.gate[0] - a.gate[0]) || 1;
+    for (let x = a.gate[0]; x !== b.gate[0] + dirX; x += dirX) {
+      paveWide(x, laneY);
+      path.push([x, laneY] as const);
+    }
+    for (let y = laneY; y > b.gate[1]; y--) {
+      paveWide(b.gate[0], y);
+      path.push([b.gate[0], y] as const);
+    }
+    if (path.length > 3) highways.push(path);
+  }
+
   // Rails: the stations form a line — technology stitches the cities together.
   const rails: (readonly [number, number])[][] = [];
   const stations = villages.filter((v) => v.station).sort((a, b) => a.x - b.x || a.y - b.y);
@@ -710,7 +794,30 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     rails.push(path);
   }
 
-  return { tiles, villages, rails, roads };
+  // The grid: each substation connects to the nearest plant within range.
+  const RANGE = 70;
+  const powerLines: (readonly [readonly [number, number], readonly [number, number]])[] = [];
+  const plants = villages.filter((v) => v.plant);
+  for (const v of villages) {
+    if (!v.substation) continue;
+    let best: (typeof plants)[number] | null = null;
+    let bestD = RANGE;
+    for (const pv of plants) {
+      if (!pv.plant) continue;
+      const d = Math.hypot(pv.plant[0] - v.substation[0], pv.plant[1] - v.substation[1]);
+      if (d < bestD) {
+        bestD = d;
+        best = pv;
+      }
+    }
+    if (best?.plant) {
+      v.powered = true;
+      powerLines.push([best.plant, v.substation] as const);
+    }
+  }
+  for (const pv of plants) pv.powered = true; // the plant powers its own city
+
+  return { tiles, villages, rails, roads, highways, powerLines };
 }
 
 /** Stable NPC placement: region residents (minus the hero) each take a village spot. */

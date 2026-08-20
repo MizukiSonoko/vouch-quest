@@ -30,22 +30,27 @@ function settledLine(payload: Record<string, unknown>): string {
   return "だれかが とりひきを した。";
 }
 
+function vary(seq: number, ...variants: string[]): string {
+  return variants[seq % variants.length] ?? variants[0] ?? "";
+}
+
 export function eventToMessage(event: LogEventView): string {
   const p = event.payload;
+  const n = event.seq;
   switch (event.type) {
     case "region.founded":
       return `あたらしいむら「${str(p, "region.id", "regionId")}」が たんじょうした!`;
     case "agent.admitted": {
       const id = str(p, "admission.id", "id");
       if (isChildName(id)) return `${str(p, "admission.region")}に あかちゃんが うまれた! なまえは ${id.split("@")[0]}!`;
-      return `${id}が むらの なかまに くわわった!`;
+      return vary(n, `${id}が むらの なかまに くわわった!`, `${id}が ひっこしてきた。よろしくね!`, `あたらしい かおぶれ: ${id}`);
     }
     case "agent.migrated": {
       if (str(p, "toRegion") === AFTERLIFE) return `${str(p, "agentId")}が てんに めされた… やすらかに。`;
-      return `${str(p, "agentId")}は ${str(p, "toRegion")}へ ひっこした。`;
+      return vary(n, `${str(p, "agentId")}は ${str(p, "toRegion")}へ ひっこした。`, `${str(p, "agentId")}、こころきかいを もとめて ${str(p, "toRegion")}へ。`, `たびだち: ${str(p, "agentId")} → ${str(p, "toRegion")}`);
     }
     case "agent.vouched":
-      return `${str(p, "from")}は ${str(p, "to")}を ほしょうした!`;
+      return vary(n, `${str(p, "from")}は ${str(p, "to")}を ほしょうした!`, `${str(p, "from")}、${str(p, "to")}に しんらいの ひとおし。`, `きずな: ${str(p, "from")} → ${str(p, "to")}`);
     case "economy.settled":
       return settledLine(p);
     case "economy.minted":
@@ -80,7 +85,7 @@ export function eventToMessage(event: LogEventView): string {
     case "region.listed":
       return `むら「${str(p, "regionId")}」が うりに だされた!`;
     case "region.ownership.transferred":
-      return `むら「${str(p, "regionId")}」の あるじが かわった!`;
+      return `ごうがい! むら「${str(p, "regionId")}」は ${str(p, "to")}けいれつに がっぺいされた!`;
     case "region.recognized":
       return `むら「${str(p, "regionId")}」が しょうにんされた!`;
     case "definition.put":

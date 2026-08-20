@@ -79,3 +79,15 @@ export const REGIME_COLOR: Readonly<Record<Regime, string>> = {
   plutocracy: "#e07820",
   consensus: "#e8e8e8",
 };
+
+/** A law change, in words a villager would use. */
+export function lawText(change: Record<string, unknown> | undefined): string {
+  if (!change) return "なぞの おきて";
+  const policy = change["policy"];
+  const value = change["value"] as Record<string, unknown> | undefined;
+  if (policy === "items") return `ちゅうぞうほう: ${value?.["minting"] === "anyone" ? "だれでも きたえてよし" : value?.["minting"] === "residents" ? "じゅうみんのみ" : "あるじのみ"}`;
+  if (policy === "economy") return `ぜいせい: てすうりょう ${Math.round(((value?.["baseCostRate"] as number | undefined) ?? 0) * 100)}%`;
+  if (policy === "governance") return `けんぽう: ${REGIME_JA[classifyRegime((value ?? { kind: "dictatorship" }) as unknown as GovernanceValue)].label}`;
+  if (policy === "diplomacy") return "がいこうほうしん の あらため";
+  return `おきて (${String(policy)})`;
+}

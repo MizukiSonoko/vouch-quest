@@ -62,12 +62,12 @@ const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)] as T
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const say = (who: string, msg: string, res?: unknown) => console.log(`[${who}] ${msg}${res !== undefined ? ` ${JSON.stringify(res)}` : ""}`);
 
-type Name = "Momo" | "Kaji" | "Gin" | "Sora" | "Toshi" | "Zai" | "Ginko" | "Kuro" | "Yoru" | "Hikari";
-const TROUPE: readonly Name[] = ["Momo", "Kaji", "Gin", "Sora", "Toshi", "Zai", "Ginko", "Kuro", "Yoru", "Hikari"];
+type Name = "Momo" | "Kaji" | "Gin" | "Sora" | "Toshi" | "Zai" | "Ginko" | "Kuro" | "Yoru" | "Hikari" | "Hakobu" | "Hoken" | "Geinin";
+const TROUPE: readonly Name[] = ["Momo", "Kaji", "Gin", "Sora", "Toshi", "Zai", "Ginko", "Kuro", "Yoru", "Hikari", "Hakobu", "Hoken", "Geinin"];
 const ROLES: Record<Name, "artisan" | "merchant" | "broker"> = {
   Momo: "merchant", Kaji: "artisan", Gin: "broker", Sora: "merchant",
   Toshi: "broker", Zai: "merchant", Ginko: "broker", Kuro: "merchant",
-  Yoru: "merchant", Hikari: "broker",
+  Yoru: "merchant", Hikari: "broker", Hakobu: "merchant", Hoken: "broker", Geinin: "artisan",
 };
 const SETTLERS = ["Hana", "Taro", "Suzu", "Gonta", "Mimi", "Roku", "Chiyo", "Bunta", "Kiku", "Nobu", "Ume", "Sen", "Rin", "Kota", "Yuki", "Asa", "Fuku", "Tetsu", "Nana", "Goro", "Ine", "Matsu", "Take", "Tsuru", "Kame", "Botan", "Kaede", "Sumire", "Ran", "Fuji", "Hagi", "Kiri"];
 const WARES = ["bread", "fish", "lantern", "rope", "boots", "tea", "brick", "gear"];
@@ -150,6 +150,22 @@ function bankLedger(events: readonly LogEvent[], bankName: string): Map<string, 
   return ledger;
 }
 
+/** Insurance book: net premiums per agent (positive = covered), from the log. */
+function insuranceBook(events: readonly LogEvent[]): Map<string, number> {
+  const book = new Map<string, number>();
+  for (const e of events) {
+    if (e.type !== "economy.settled") continue;
+    const entries = (e.payload["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+    const insurer = entries.find((x) => x.agentId?.startsWith("Hoken@"));
+    if (!insurer || typeof insurer.currencyDelta !== "number") continue;
+    const other = entries.find((x) => x.agentId && !x.agentId.startsWith("Hoken@") && !x.agentId.startsWith("treasury@") && (x.currencyDelta ?? 0) * insurer.currencyDelta < 0);
+    if (!other?.agentId) continue;
+    // Premiums received raise coverage; payouts spend it down.
+    book.set(other.agentId, (book.get(other.agentId) ?? 0) + insurer.currencyDelta);
+  }
+  return book;
+}
+
 /** All vouch edges (from>to) in the log — mutual edges are marriages. */
 function vouchEdges(events: readonly LogEvent[]): Set<string> {
   const edges = new Set<string>();
@@ -189,9 +205,13 @@ async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promis
 
 // --- one waking resident --------------------------------------------------------
 
-async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledger: Map<string, number>; edges: Set<string> }): Promise<void> {
+async function act(
+  name: Name,
+  world: { agents: Agent[]; regions: Region[]; ledger: Map<string, number>; edges: Set<string>; items: Item[]; events: LogEvent[] },
+): Promise<void> {
   const client = clientFor(name);
   const { agents, regions, ledger, edges } = world;
+  const worldEvents = world.events;
   const me = agents.find((a) => a.id.startsWith(`${name}@`) && a.role !== "treasury" && a.region !== AFTERLIFE);
   if (!me) return bootstrap(name, agents, regions);
   await ensureRegistered(client, me.id);
@@ -282,6 +302,91 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
       const regime = pick(REGIMES);
       say(name, `proposes a new constitution for ${home.id}: ${regime}`,
         await client.propose(me.id, home.id, { policy: "governance", value: buildGovernance(regime, residents) }));
+      await sleep(900);
+    }
+  }
+
+  // 保険業: Hoken pays out to covered neighbors who are sick — real gold for real colds.
+  if (name === "Hoken") {
+    const book = insuranceBook(worldEvents);
+    const items2 = world.items;
+    const sickCovered = neighbors.filter((n2) => (book.get(n2.id) ?? 0) > 0 && items2.some((it) => it.owner === n2.id && it.kind === BYOKI));
+    if (sickCovered.length > 0 && me.balances.currency > 10) {
+      const claimant = sickCovered[Math.floor(rand() * sickCovered.length)];
+      if (claimant) {
+        say(name, `pays an insurance claim to ${claimant.id}`, await client.transfer(me.id, claimant.id, 6));
+        await sleep(900);
+      }
+    } else if (neighbors.length > 0 && rand() < 0.5) {
+      const to = neighbors[Math.floor(rand() * neighbors.length)];
+      if (to) say(name, `advertises coverage to ${to.id}`, await client.vouch(me.id, to.id, 1));
+    }
+    return;
+  }
+
+  // 旅芸人: Geinin tours the towns; delighted locals tip a coin.
+  if (name === "Geinin") {
+    if (rand() < 0.5) {
+      const target = active.filter((r) => r.id !== me.region && r.id !== AFTERLIFE);
+      const t2 = target[Math.floor(rand() * target.length)];
+      if (t2) {
+        say(name, `takes the show to ${t2.id}`, await client.migrate(me.id, t2.id));
+        return;
+      }
+    }
+    for (const fan of neighbors.slice(0, 2)) {
+      if (fan.balances.currency > 3 && isBotFolk(fan.id)) {
+        const fanClient = clientFor(fan.id);
+        await ensureRegistered(fanClient, fan.id);
+        say(fan.id, `tips the performer`, await fanClient.transfer(fan.id, me.id, 1));
+        await sleep(900);
+      }
+    }
+    if (neighbors.length > 0) say(name, "takes a bow", await client.vouch(me.id, pick(neighbors).id, 1));
+    return;
+  }
+
+  // 運送業: Hakobu hauls wares between towns — load up, drive out, deliver.
+  if (name === "Hakobu") {
+    const cargo = world.items.filter((it) => it.owner === me.id && it.kind !== BYOKI);
+    if (cargo.length >= 2 && rand() < 0.6) {
+      const target = active.filter((r) => r.id !== me.region && r.id !== AFTERLIFE);
+      const t2 = target[Math.floor(rand() * target.length)];
+      if (t2) {
+        say(name, `hauls ${cargo.length} crates to ${t2.id}`, await client.migrate(me.id, t2.id));
+        return;
+      }
+    }
+    if (cargo.length > 0 && neighbors.length > 0) {
+      const parcel = cargo[Math.floor(rand() * cargo.length)];
+      const to = neighbors[Math.floor(rand() * neighbors.length)];
+      if (parcel && to) {
+        say(name, `delivers ${parcel.kind} to ${to.id}`, await client.transferItem(me.id, parcel.id, to.id));
+        await sleep(900);
+      }
+    }
+    say(name, "packs a crate", await client.mintItem(me.id, `crate${Math.random().toString(36).slice(2, 7)}`, pick(WARES), me.id));
+    return;
+  }
+
+  // M&A: Zai absorbs struggling bot towns through the REAL region market —
+  // the seller hibernates and lists it, then hands it over; Zai reopens it.
+  if (name === "Zai" && rand() < 0.15 && owned.length < 6) {
+    const target = regions.find((r) => {
+      if (!r.owner || r.owner === "Zai" || r.id === AFTERLIFE || r.lifecycle !== "active") return false;
+      if (!(TROUPE as readonly string[]).includes(r.owner) || r.owner === "Enma") return false;
+      const pop = agents.filter((a) => a.region === r.id && a.role !== "treasury").length;
+      return pop <= 2;
+    });
+    if (target?.owner) {
+      const seller = clientFor(target.owner);
+      say(target.owner, `agrees to sell ${target.id}`, await seller.lifecycle(target.owner, target.id, "dormant"));
+      await sleep(900);
+      say(target.owner, "lists it", await seller.list(target.owner, target.id, 30));
+      await sleep(900);
+      say(target.owner, `hands ${target.id} to Zai`, await seller.handover(target.owner, target.id, "Zai"));
+      await sleep(900);
+      say(name, `reopens ${target.id} under the Zai group`, await client.lifecycle("Zai", target.id, "active"));
       await sleep(900);
     }
   }
@@ -431,6 +536,22 @@ async function villagerAct(
       const suitor = neighbors.find((o) => edges.has(`${o.id}>${agent.id}`) && !isMarried(edges, o.id, neighbors));
       const beloved = suitor ?? neighbors.filter((o) => !isMarried(edges, o.id, neighbors) && !CHILD_NAMES.includes(bareName(o.id)))[0];
       if (beloved) say(agent.id, `courts ${beloved.id}`, await client.vouch(agent.id, beloved.id, 3));
+    } else if (roll < 0.42 && agent.balances.currency > 4) {
+      const insurer = neighbors.find((n2) => n2.id.startsWith("Hoken@"));
+      if (insurer) {
+        say(agent.id, "buys insurance", await client.transfer(agent.id, insurer.id, 1 + Math.floor(rand() * 2)));
+      } else if (neighbors.length > 0) {
+        const to = neighbors[Math.floor(rand() * neighbors.length)];
+        if (to) say(agent.id, `pays ${to.id}`, await client.transfer(agent.id, to.id, 1 + Math.floor(rand() * 4)));
+      }
+    } else if (roll < 0.48 && agent.balances.currency > 6) {
+      // Family economics: a gift for the spouse, pocket money for the kids.
+      const spouse = neighbors.find((o) => edges.has(`${agent.id}>${o.id}`) && edges.has(`${o.id}>${agent.id}`));
+      const kid = neighbors.find((o) => CHILD_NAMES.includes(bareName(o.id)));
+      const dear = spouse ?? kid;
+      if (dear) {
+        say(agent.id, spouse ? `gives a gift to ${dear.id}` : `gives pocket money to ${dear.id}`, await client.transfer(agent.id, dear.id, spouse ? 3 : 1));
+      }
     } else if (roll < 0.55 && neighbors.length > 0 && agent.balances.currency > 6) {
       const to = neighbors[Math.floor(rand() * neighbors.length)];
       if (to) say(agent.id, `pays ${to.id}`, await client.transfer(agent.id, to.id, 1 + Math.floor(rand() * 4)));
@@ -470,6 +591,7 @@ const world = {
   edges: vouchEdges(events),
   logLen: events.length,
   items: (await boot.items()) as Item[],
+  events,
 };
 
 const awake = [...TROUPE].sort(() => rand() - 0.5).slice(0, 6 + Math.floor(rand() * 2));

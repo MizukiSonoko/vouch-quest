@@ -310,6 +310,63 @@ const POSTER = [
   "gggggggggggggggg",
 ];
 
+const AIRPORT = [
+  "mmmmmmmmmmmmmmmm",
+  "mxxxxxxxxxxxxxxm",
+  "mxeeeeeeeeeeeexm",
+  "mxeNNeNNeNNeNexm".slice(0, 16),
+  "mxeeeeeeeeeeeexm",
+  "mxxxxxxxxxxxxxxm",
+  "mmmmxeeeexmmmmmm",
+  "mmmmxeNNexmmmmmm",
+  "mmmmxeeeexmmmmmm",
+  "mmmmmxeexmmmmmmm",
+  "mmmmmxeexmmmmmmm",
+  "mmxxxxxxxxxxmmmm",
+  "mmxyyxmmxyyxmmmm",
+  "mmmmmmmmmmmmmmmm",
+  "mHmmmmHmmmmHmmmm",
+  "mmmmmmmmmmmmmmmm",
+];
+
+const PLANT = [
+  "mmmmmmmmmmmmmmmm",
+  "mmxxxmmmmmxxxmmm",
+  "mxeeexmmmxeeexmm",
+  "mxeeexmmmxeeexmm",
+  "mmxexmmmmmxexmmm",
+  "mmxexmmmmmxexmmm",
+  "mxxxxxxxxxxxxxmm",
+  "mxHHHHHHHHHHHxmm",
+  "mxHyyHHHHHyyHxmm".replace("yy", "yy"),
+  "mxHHyHHHHHyHHxmm",
+  "mxHHHyyyyyHHHxmm",
+  "mxHHHHyyHHHHHxmm",
+  "mxHHHyyHHHHHHxmm",
+  "mxxxxxxxxxxxxxmm",
+  "mHmmmmHmmmmHmmmm",
+  "mmmmmmmmmmmmmmmm",
+];
+
+const SUBSTATION = [
+  "gggggggggggggggg",
+  "gxgxgxgxgxgxgxgg",
+  "gggggggggggggggg",
+  "ggxxxxxxxxxxxggg",
+  "ggxmmmmmmmmmxggg",
+  "ggxmyymmmyymxggg",
+  "ggxmyymmmyymxggg",
+  "ggxmmmmmmmmmxggg",
+  "ggxmmyyyyymmxggg",
+  "ggxmmmyymmmmxggg",
+  "ggxmmyymmmmmxggg",
+  "ggxmmmmmmmmmxggg",
+  "ggxxxxxxxxxxxggg",
+  "gxgxgxgxgxgxgxgg",
+  "gggggggggggggggg",
+  "gggggggggggggggg",
+];
+
 const STALL = [
   "gggggggggggggggg",
   "gxRRRReeeeRRRRxg",
@@ -672,6 +729,9 @@ export function buildSprites(): SpriteSet {
     [Tile.Poster, draw(POSTER)],
     [Tile.HospitalRoof, draw(ROOF.map((row, y) => (y >= 5 && y <= 9 ? `${row.slice(0, 5)}rrrrrr${row.slice(11)}`.slice(0, 16) : row)).map((r) => r.replaceAll("r", "e").replaceAll("R", "e")).map((row, y) => (y >= 5 && y <= 9 ? `${row.slice(0, 7)}rr${row.slice(9)}` : y >= 6 && y <= 8 ? row : row)).map((row, y) => (y === 7 ? `${row.slice(0, 5)}rrrrrr${row.slice(11)}` : row)))],
     [Tile.HospitalDoor, draw(doorWith("r"))],
+    [Tile.Airport, draw(AIRPORT)],
+    [Tile.Plant, draw(PLANT)],
+    [Tile.Substation, draw(SUBSTATION)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();

@@ -7,11 +7,11 @@
 import type { AgentView, ItemView, LogEventView, Snapshot } from "../shared";
 import { dayPhase, ParticleField, SkyShow, Weather, Wildlife } from "./ambience";
 import { npcLines } from "./dialogue";
-import { AFTERLIFE, BYOKI, foldLife, isDead, WeddingBook } from "./life";
+import { AFTERLIFE, BYOKI, foldLife, isChildName, isDead, WeddingBook } from "./life";
 import { eventToMessage } from "./feed";
 import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, villageContains, type WorldMap } from "./map";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
-import { classifyRegime, type GovernanceValue, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
+import { classifyRegime, type GovernanceValue, lawText, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
 import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
 import { canShopHere, CATALOG, friendlyPairs, kindName, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
 import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
@@ -81,7 +81,43 @@ function extraExtra(text: string): void {
   shakeUntil = performance.now() + 700;
   se("fanfare");
 }
-let scene: "title" | "game" = "title";
+let scene: "title" | "game" | "interior" = "title";
+interface InteriorRoom {
+  readonly village: Village;
+  readonly occupant: AgentView | null;
+  readonly furniture: readonly { x: number; y: number; kind: "bed" | "table" | "shelf" | "pot" }[];
+  readonly exit: readonly [number, number];
+  px: number;
+  py: number;
+}
+let interior: InteriorRoom | null = null;
+const ROOM_W = 11;
+const ROOM_H = 8;
+
+function enterHouse(village: Village, homeIndex: number): void {
+  const residents = (snapshot?.agents ?? [])
+    .filter((a) => a.region === village.regionId && a.role !== "treasury" && a.id !== snapshot?.me.agentId)
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const occupant = residents[homeIndex % Math.max(1, residents.length)] ?? null;
+  const furniture: { x: number; y: number; kind: "bed" | "table" | "shelf" | "pot" }[] = [
+    { x: 1, y: 1, kind: "bed" },
+    { x: ROOM_W - 3, y: 1, kind: "shelf" },
+    { x: 4 + Math.floor(Math.random() * 3), y: 3, kind: "table" },
+    { x: 1, y: ROOM_H - 3, kind: "pot" },
+  ];
+  interior = { village, occupant, furniture, exit: [Math.floor(ROOM_W / 2), ROOM_H - 1] as const, px: Math.floor(ROOM_W / 2), py: ROOM_H - 2 };
+  scene = "interior";
+  se("confirm");
+  log.push(occupant ? `${occupant.id}の いえに おじゃまします…` : "だれも いない いえだ…");
+}
+
+function interiorSolid(x: number, y: number): boolean {
+  if (!interior) return true;
+  if (x <= 0 || y <= 0 || x >= ROOM_W - 1 || y >= ROOM_H - 1) {
+    return !(x === interior.exit[0] && y === interior.exit[1]);
+  }
+  return interior.furniture.some((f) => f.x === x && f.y === y) || (interior.occupant !== null && x === 3 && y === 2);
+}
 let banner: { text: string; until: number } | null = null;
 let tickerText = "";
 let tickerX = 0;
@@ -329,6 +365,12 @@ function celebrate(): void {
         }
         break;
       }
+      case "region.ownership.transferred": {
+        const at = villageCenterPx(pick(p, "regionId"));
+        if (at) particles.firework(at[0], at[1]);
+        extraExtra(eventToMessage(e));
+        break;
+      }
       case "region.institution.changed": {
         const at = villageCenterPx(pick(p, "regionId"));
         const isConstitution = ((p as Record<string, unknown>)["change"] as Record<string, unknown> | undefined)?.["policy"] === "governance";
@@ -429,7 +471,14 @@ function npcMenu(mob: Mob): void {
           const owner = snapshot?.regions.find((r) => r.id === a.region)?.owner ?? null;
           ui.push(
             new Info(a.id, [
-              ...npcLines(a, snapshot?.items ?? [], owner, map?.villages.find((v) => v.regionId === a.region)?.biome ?? Biome.Plains),
+              ...npcLines(
+                a,
+                snapshot?.items ?? [],
+                owner,
+                map?.villages.find((v) => v.regionId === a.region)?.biome ?? Biome.Plains,
+                (snapshot?.logLength ?? 500) - (a.admittedAtSeq ?? 0),
+                isChildName(a.id),
+              ),
               "",
               `しょくぎょう: ${roleJa(a.role)}`,
               `しょじきん: ${a.balances.currency}G  くれじっと: ${a.balances.credit}`,
@@ -496,13 +545,21 @@ function villageInfo(ctx: VillageContext): void {
   ui.push(
     new Info(`むら「${region.displayName}」(${region.id})`, [
       `あるじ: ${region.owner ?? "なし"}  じょうたい: ${region.lifecycle}`,
-      `きこう: ${BIOME_JA[map?.villages.find((v) => v.regionId === region.id)?.biome ?? Biome.Plains]}  はってん: ${["むら", "まち", "とし"][map?.villages.find((v) => v.regionId === region.id)?.tier ?? 0]}`,
+      (() => {
+        const v = map?.villages.find((x) => x.regionId === region.id);
+        return `きこう: ${BIOME_JA[v?.biome ?? Biome.Plains]}  はってん: ${["むら", "まち", "とし", "だいとし"][v?.tier ?? 0]}  でんき: ${v?.powered ? "つうでん" : "みでんか"}`;
+      })(),
       `せいじ: ${REGIME_JA[classifyRegime(region.institutions.governance as GovernanceValue)].label}`,
       `どうぐづくり: ${ctx.mintingOpen ? "だれでも" : "あるじのみ"}`,
       `ぜいりつ: ${region.institutions.economyPolicy.baseCostRate} (さいてい ${region.institutions.economyPolicy.minCostRate})`,
       `きんこ: ${treasury?.balances.currency ?? 0}G  じゅうみん: ${residents.length}にん`,
       ...residents.map((r) => `  ${r.id} (${roleJa(r.role)}) ${r.balances.currency}G`),
       region.openProposal ? `ひょうけつちゅう! とうひょう ${region.openProposal.votes.length}` : "ひょうけつは ない",
+      (() => {
+        const owner = region.owner;
+        const group = owner ? (snapshot?.regions ?? []).filter((r) => r.owner === owner && r.id !== AFTERLIFE) : [];
+        return group.length > 1 ? `けいれつ: ${owner}グループ (${group.map((g) => g.displayName).join("・")})` : "どくりつけいえい";
+      })(),
       (() => {
         const friends = friendlyPairs(snapshot?.regions ?? [])
           .filter(([a, b]) => a === region.id || b === region.id)
@@ -656,6 +713,7 @@ function courtMenu(village: Village): void {
         ui.push(
           new Info("ひょうけつ", region.openProposal
             ? [
+                `ぎだい: ${lawText(region.openProposal.change)}`,
                 `ていあんしゃ: ${region.openProposal.proposedBy}`,
                 `とうひょう: ${region.openProposal.votes.length}`,
                 ...region.openProposal.votes.map((v) => `  ${v}`),
@@ -701,10 +759,17 @@ function shopMenu(village: Village): void {
   }
   const gold = heroAgent()?.balances.currency ?? 0;
   const sale = festivals.has(region.id);
+  const vTier = map?.villages.find((v) => v.regionId === region.id)?.tier ?? 0;
   const priceOf = (base: number): number => (sale ? Math.max(1, Math.ceil(base * 0.8)) : base);
+  // Infrastructure decides the stock: fine goods only reach developed towns.
+  const stocked = (w2: (typeof CATALOG)[number]): boolean => (w2.price >= 80 ? vTier >= 2 : w2.price >= 30 ? vTier >= 1 : true);
   ui.push(
     new Menu(`${region.displayName}の どうぐや ${sale ? "★まつりセール★" : ""}(もちがね ${gold}G)`, [
-      ...CATALOG.map((w) => ({ label: `${w.name}  ${priceOf(w.price)}G${sale ? ` (もと${w.price}G)` : ""}`, value: w.kind, disabled: gold < priceOf(w.price) })),
+      ...CATALOG.map((w) => ({
+        label: stocked(w) ? `${w.name}  ${priceOf(w.price)}G${sale ? ` (もと${w.price}G)` : ""}` : `${w.name}  — にゅうかは まちいこう`,
+        value: w.kind,
+        disabled: !stocked(w) || gold < priceOf(w.price),
+      })),
       { label: "やめる", value: "cancel" },
     ], (kind) => {
       if (kind === "cancel") return ui.clear();
@@ -795,9 +860,10 @@ function posterMenu(village: Village): void {
 function hospitalMenu(village: Village): void {
   const life = foldLife(allEvents);
   const myByoki = myItems().find((i) => i.kind === BYOKI);
-  const fee = 3;
+  // Electrified hospitals treat you cheaper — infrastructure you can feel.
+  const fee = village.powered ? 3 : 5;
   const entries = [
-    { label: myByoki ? `てあてを うける (${fee}G)` : "てあてを うける (けんこうだ)", value: "cure", disabled: !myByoki },
+    { label: myByoki ? `てあてを うける (${fee}G${village.powered ? "・でんきで おとく" : ""})` : "てあてを うける (けんこうだ)", value: "cure", disabled: !myByoki },
     { label: "むらの けんこうきろく", value: "stats" },
     { label: "やめる", value: "cancel" },
   ];
@@ -833,6 +899,36 @@ function hospitalMenu(village: Village): void {
           `むすばれた ふうふ: ${life.book.marriages}くみ`,
         ], () => ui.pop()));
       } else ui.clear();
+    }, () => ui.clear()),
+  );
+}
+
+/** くうこう — fly between metropolises (presentation-level travel, like the train). */
+function airportMenu(village: Village): void {
+  const destinations = (map?.villages ?? []).filter((v) => v.airport && v.regionId !== village.regionId);
+  if (destinations.length === 0) {
+    ui.push(new Info(`${village.displayName}くうこう`, ["かっそうろは あるが、ゆきさきが まだ ない。", "べつの まちが「だいとし」に そだてば ろせんが ひらく。"], () => ui.pop()));
+    return;
+  }
+  ui.push(
+    new Menu(`${village.displayName}くうこう — どこへ とぶ?`, [
+      ...destinations.map((v) => ({ label: `${v.displayName} (${BIOME_JA[v.biome]})`, value: v.regionId })),
+      { label: "やめる", value: "cancel" },
+    ], (rid) => {
+      if (rid === "cancel") return ui.clear();
+      const dest = map?.villages.find((v) => v.regionId === rid);
+      if (dest) {
+        player.x = dest.gate[0];
+        player.y = dest.gate[1] + 1;
+        player.px = player.x * CELL;
+        player.py = player.y * CELL;
+        se("fanfare");
+        log.push(`ひこうきで ${dest.displayName}へ ひとっとび!`);
+        const j = journal();
+        j.rides++;
+        saveJournal(j);
+      }
+      ui.clear();
     }, () => ui.clear()),
   );
 }
@@ -1017,9 +1113,40 @@ function interact(): void {
     const village = map.villages.find((v) => v.poster[0] === fx && v.poster[1] === fy);
     if (village) return posterMenu(village);
   }
+  if (tile === Tile.HouseDoor || tile === Tile.DoorWood) {
+    const village = map.villages.find((v) => villageContains(v, fx, fy));
+    const homeIndex = village?.homes.findIndex(([hx2, hy2]) => hx2 === fx && hy2 === fy) ?? -1;
+    if (village && homeIndex >= 0) return enterHouse(village, homeIndex);
+  }
   if (tile === Tile.HospitalDoor) {
     const village = map.villages.find((v) => v.hospital && v.hospital[0] === fx && v.hospital[1] === fy);
     if (village) return hospitalMenu(village);
+  }
+  if (tile === Tile.Plant) {
+    const village = map.villages.find((v) => v.plant && v.plant[0] === fx && v.plant[1] === fy);
+    if (village && snapshot) {
+      const treasury = snapshot.agents.find((a) => a.id === `treasury@${village.regionId}`)?.balances.currency ?? 0;
+      const served = map.villages.filter((v) => v.powered).length;
+      ui.push(new Info(`${village.displayName} はつでんしょ`, [
+        `しゅつりょく: ${100 + treasury * 2}kW (きんこ ${treasury}Gで うんてん)`,
+        `そうでんちゅう: ${served}まち に でんきを おくっている`,
+        "「でんきは ぶんめいの ちからだ」",
+      ], () => ui.pop()));
+    }
+    return;
+  }
+  if (tile === Tile.Substation) {
+    const village = map.villages.find((v) => v.substation && v.substation[0] === fx && v.substation[1] === fy);
+    if (village) {
+      ui.push(new Info(`${village.displayName} へんでんしょ`, village.powered
+        ? ["つうでんちゅう。よるには まちの まどが ともる。", "『さわるな キケン』"]
+        : ["まだ でんきが きていない…", "どこかに「だいとし」の はつでんしょが できれば つながる。"], () => ui.pop()));
+    }
+    return;
+  }
+  if (tile === Tile.Airport) {
+    const village = map.villages.find((v) => v.airport && v.airport[0] === fx && v.airport[1] === fy);
+    if (village) return airportMenu(village);
   }
   if (tile === Tile.Station) {
     const village = map.villages.find((v) => v.station && v.station[0] === fx && v.station[1] === fy);
@@ -1110,6 +1237,9 @@ const MINI_COLORS: Record<number, string> = {
   [Tile.Station]: "#c23a2e",
   [Tile.HospitalRoof]: "#f0f0f0",
   [Tile.HospitalDoor]: "#c23a2e",
+  [Tile.Airport]: "#b8c8d8",
+  [Tile.Plant]: "#8890a0",
+  [Tile.Substation]: "#c8b830",
 };
 const MINI_SCALE = 3;
 let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;
@@ -1184,6 +1314,44 @@ window.addEventListener("keydown", (e) => {
     else if (e.key === "Enter" || e.key === " " || e.key === "z") se("confirm");
     else if (e.key === "Escape" || e.key === "x") se("cancel");
     ui.handleKey(e.key);
+    return;
+  }
+  if (scene === "interior" && interior) {
+    if (!ui.active) {
+      const dir = DIRS[e.key];
+      if (dir) {
+        const nx = interior.px + dir[0];
+        const ny = interior.py + dir[1];
+        if (nx === interior.exit[0] && ny === interior.exit[1]) {
+          scene = "game";
+          interior = null;
+          se("cancel");
+          return;
+        }
+        if (!interiorSolid(nx, ny)) {
+          interior.px = nx;
+          interior.py = ny;
+        }
+        return;
+      }
+      if (e.key === "Escape" || e.key === "x") {
+        scene = "game";
+        interior = null;
+        se("cancel");
+        return;
+      }
+      if ((e.key === "Enter" || e.key === " " || e.key === "z") && interior.occupant) {
+        // Face-adjacent to the occupant? Then chat, using the same real menu.
+        if (Math.abs(interior.px - 3) + Math.abs(interior.py - 2) === 1) {
+          se("confirm");
+          npcMenu({ agent: interior.occupant, x: 0, y: 0, px: 0, py: 0, timer: 0, frame: 0, home: undefined, target: null, bubble: null });
+          return;
+        }
+      }
+    } else {
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") se("cursor");
+      ui.handleKey(e.key);
+    }
     return;
   }
   if (e.key === "m" || e.key === "M") {
@@ -1399,18 +1567,28 @@ function chatterLine(mob: Mob): string {
   if (gold < 10) return "はらへった…";
   if (gold >= 150) return "わっはっは!";
   if (mob.agent.trust >= 5) return "しんらいが いちばん";
-  const pool = ["やあ!", "きいたかい?", "もうかった?", "いいてんきだ", "せいが でるね"];
-  return pool[Math.floor(Math.random() * pool.length)] ?? "やあ!";
+  if (isChildName(mob.agent.id)) return pick2(["あそぼー!", "みてみて!", "かけっこ しよう!"]);
+  const pool = [
+    "やあ!", "きいたかい?", "もうかった?", "いいてんきだ", "せいが でるね",
+    "でんしゃ のった?", "ひこうきって すごいね", "ぜいきん あがるらしい…",
+    "Kuroに きをつけな", "ほけん はいった?", "となりまち いった?",
+  ];
+  return pick2(pool);
+}
+
+function pick2<T>(pool: readonly T[]): T {
+  return pool[Math.floor(Math.random() * pool.length)] as T;
 }
 
 function replyLine(mob: Mob): string {
   if (mob.agent.balances.currency < 10) return "ごちそうしてくれ…";
-  const pool = ["うんうん", "なるほどね", "はっはっは", "ぼちぼちさ", "そうかい?"];
-  return pool[Math.floor(Math.random() * pool.length)] ?? "うんうん";
+  const pool = ["うんうん", "なるほどね", "はっはっは", "ぼちぼちさ", "そうかい?", "それは いいね", "しらなかった!", "ないしょだよ", "むりむり", "けんこう だいいち"];
+  return pick2(pool);
 }
 
 function render(): void {
   if (!ctx) return;
+  ctx.textBaseline = "top";
   const w = canvas.width;
   const h = canvas.height;
   ctx.fillStyle = "#000";
@@ -1518,7 +1696,8 @@ function render(): void {
     ctx.fillRect(bx, by, bw, 20);
     ctx.fillRect(mob.px - camX + CELL / 2 - 3, by + 20, 6, 5);
     ctx.fillStyle = "#111";
-    ctx.fillText(mob.bubble.text, bx + 7, by + 14);
+    ctx.textBaseline = "top";
+    ctx.fillText(mob.bubble.text, bx + 7, by + 4);
   }
 
   // Tourists (white travelers snapping the sights).
@@ -1574,6 +1753,71 @@ function render(): void {
     }
   }
 
+  // Transmission lines hum between plants and substations, pylons in step.
+  for (const [a, b] of map.powerLines) {
+    const ax = a[0] * CELL - camX + CELL / 2;
+    const ay = a[1] * CELL - camY + 8;
+    const bx = b[0] * CELL - camX + CELL / 2;
+    const by = b[1] * CELL - camY + 8;
+    ctx.strokeStyle = "rgba(30, 30, 40, 0.55)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    const midSag = 6;
+    ctx.quadraticCurveTo((ax + bx) / 2, (ay + by) / 2 + midSag, bx, by);
+    ctx.stroke();
+    const dist = Math.hypot(bx - ax, by - ay);
+    const pylons = Math.max(1, Math.floor(dist / (CELL * 5)));
+    for (let i = 1; i < pylons; i++) {
+      const f = i / pylons;
+      const px = ax + (bx - ax) * f;
+      const py = ay + (by - ay) * f;
+      ctx.fillStyle = "#4a4a55";
+      ctx.fillRect(px - 2, py, 4, 26);
+      ctx.fillRect(px - 8, py + 2, 16, 3);
+    }
+  }
+
+  // Trucks thunder along the highways.
+  for (const hw of map.highways) {
+    if (hw.length < 4) continue;
+    const span = hw.length - 1;
+    const t = Math.floor(performance.now() / 90) % (span * 2);
+    const idx = t <= span ? t : span * 2 - t;
+    const pt = hw[idx];
+    if (pt) {
+      const px = pt[0] * CELL - camX + 8;
+      const py = pt[1] * CELL - camY + 14;
+      ctx.fillStyle = "#3a6fd0";
+      ctx.fillRect(px, py, 26, 16);
+      ctx.fillStyle = "#e8e8e8";
+      ctx.fillRect(px + 18, py + 2, 8, 12);
+      ctx.fillStyle = "#222";
+      ctx.fillRect(px + 3, py + 16, 6, 5);
+      ctx.fillRect(px + 17, py + 16, 6, 5);
+    }
+  }
+
+  // Airplanes cruise between airports, shadows sweeping the land below.
+  const airports = map.villages.filter((v) => v.airport);
+  for (let i = 0; i + 1 < airports.length + (airports.length > 1 ? 1 : 0); i++) {
+    const a = airports[i % airports.length]?.airport;
+    const b = airports[(i + 1) % airports.length]?.airport;
+    if (!a || !b) continue;
+    const period = 14000;
+    const t = (performance.now() % (period * 2)) / period;
+    const f = t <= 1 ? t : 2 - t;
+    const px = (a[0] + (b[0] - a[0]) * f) * CELL - camX;
+    const py = (a[1] + (b[1] - a[1]) * f) * CELL - camY - 40;
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(px + 8, py + 52, 28, 8);
+    ctx.fillStyle = "#f0f0f0";
+    ctx.fillRect(px, py + 8, 40, 10);
+    ctx.fillRect(px + 12, py, 8, 26);
+    ctx.fillStyle = "#c23a2e";
+    ctx.fillRect(px + 34, py + 8, 6, 10);
+  }
+
   const heroPair = sprites.heroFor(titleTier(title));
   ctx.drawImage(heroPair[player.frame === 0 ? 0 : 1], player.px - camX, player.py - camY);
 
@@ -1591,6 +1835,11 @@ function render(): void {
   if (phase.night) {
     ctx.globalCompositeOperation = "lighter";
     for (const [lx, ly] of lights) {
+      const t2 = tileAt(map, lx, ly);
+      if (t2 !== Tile.Lamp) {
+        const owner2 = map.villages.find((v) => villageContains(v, lx, ly));
+        if (owner2 && !owner2.powered) continue; // no electricity, no window light
+      }
       const gx2 = lx * CELL - camX + CELL / 2;
       const gy2 = ly * CELL - camY + CELL / 2;
       const grad = ctx.createRadialGradient(gx2, gy2, 4, gx2, gy2, 70);
@@ -1609,7 +1858,8 @@ function render(): void {
   if (hero) {
     ctx.font = '15px "DotGothic16", monospace';
     ctx.fillStyle = "#8fd0ff";
-    ctx.fillText(title, 32, 84);
+    ctx.textBaseline = "top";
+    ctx.fillText(title, 32, 78);
     drawText(ctx, `G: ${hero.balances.currency}`, 32, 108);
     drawText(ctx, `しんらい: ${hero.trust}`, 32, 134);
     drawText(ctx, `ひょうばん: ${hero.reputation}`, 32, 160);
@@ -1620,9 +1870,10 @@ function render(): void {
     ctx.fillStyle = "rgba(0, 6, 20, 0.82)";
     ctx.fillRect(0, 0, w, 30);
     ctx.font = '16px "DotGothic16", monospace';
+    ctx.textBaseline = "top";
     const label = "かわらばん ▶ ";
     ctx.fillStyle = "#ffd75e";
-    ctx.fillText(label, 10, 21);
+    ctx.fillText(label, 10, 7);
     const labelW = ctx.measureText(label).width + 16;
     const textW = ctx.measureText(tickerText).width + 120;
     if (tickerX < -textW) tickerX = w - labelW;
@@ -1631,8 +1882,8 @@ function render(): void {
     ctx.rect(labelW, 0, w - labelW, 30);
     ctx.clip();
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(tickerText, labelW + tickerX, 21);
-    ctx.fillText(tickerText, labelW + tickerX + textW, 21);
+    ctx.fillText(tickerText, labelW + tickerX, 7);
+    ctx.fillText(tickerText, labelW + tickerX + textW, 7);
     ctx.restore();
   }
 
@@ -1645,12 +1896,13 @@ function render(): void {
       const need = gov.kind === "council" ? (gov.threshold ?? 1) : 1;
       const got = r.openProposal.votes.length;
       ctx.font = '15px "DotGothic16", monospace';
-      const text = `かいひょうそくほう ${r.displayName}: さんせい ${got} / ひつよう ${need}`;
+      const text = `かいひょうそくほう ${r.displayName}「${lawText(r.openProposal.change)}」さんせい ${got}/${need}`;
       const bw2 = ctx.measureText(text).width + 40;
       const bx2 = (w - bw2) / 2;
       drawWindow(ctx, bx2, 36, bw2, 66);
       ctx.fillStyle = "#ffd75e";
-      ctx.fillText(text, bx2 + 20, 58);
+      ctx.textBaseline = "top";
+      ctx.fillText(text, bx2 + 20, 50);
       ctx.fillStyle = "#223";
       ctx.fillRect(bx2 + 20, 78, bw2 - 40, 10);
       ctx.fillStyle = "#2fa84f";
@@ -1664,7 +1916,8 @@ function render(): void {
     const gw = ctx.measureText(nextGoal).width + 30;
     drawWindow(ctx, w - gw - 12, 40, gw, 44);
     ctx.fillStyle = "#a5ff8a";
-    ctx.fillText(nextGoal, w - gw + 3, 66);
+    ctx.textBaseline = "top";
+    ctx.fillText(nextGoal, w - gw + 3, 54);
   }
 
   // 号外! — a full-width ribbon slams in for front-page news.
@@ -1680,8 +1933,9 @@ function render(): void {
       ctx.fillRect(0, 130, w, 4);
       ctx.fillRect(0, 190, w, 4);
       ctx.font = '26px "DotGothic16", monospace';
+      ctx.textBaseline = "top";
       const tw2 = ctx.measureText(gogai.text).width;
-      ctx.fillText(gogai.text, Math.max((w - tw2) / 2, 20) - slide, 172);
+      ctx.fillText(gogai.text, Math.max((w - tw2) / 2, 20) - slide, 148);
       ctx.globalAlpha = 1;
     }
   }
@@ -1805,8 +2059,77 @@ function renderTitle(): void {
   ctx.fillText(note, (w - ctx.measureText(note).width) / 2, 552);
 }
 
+function renderInterior(): void {
+  if (!ctx || !interior) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.textBaseline = "top";
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+  const ox = (w - ROOM_W * CELL) / 2;
+  const oy = (h - ROOM_H * CELL) / 2 - 30;
+  for (let y = 0; y < ROOM_H; y++) {
+    for (let x = 0; x < ROOM_W; x++) {
+      const border = x === 0 || y === 0 || x === ROOM_W - 1 || y === ROOM_H - 1;
+      const isExit = x === interior.exit[0] && y === interior.exit[1];
+      const sprite = border && !isExit ? sprites.tiles.get(Tile.WallWood) : sprites.tiles.get(Tile.Path);
+      if (sprite) ctx.drawImage(sprite, ox + x * CELL, oy + y * CELL);
+      if (isExit) {
+        ctx.fillStyle = "#3a2a16";
+        ctx.fillRect(ox + x * CELL + 8, oy + y * CELL + 4, CELL - 16, CELL - 8);
+      }
+    }
+  }
+  for (const f of interior.furniture) {
+    const fx = ox + f.x * CELL;
+    const fy = oy + f.y * CELL;
+    if (f.kind === "bed") {
+      ctx.fillStyle = "#b03030";
+      ctx.fillRect(fx + 4, fy + 8, CELL - 8, CELL - 12);
+      ctx.fillStyle = "#f0f0f0";
+      ctx.fillRect(fx + 6, fy + 10, 14, 12);
+    } else if (f.kind === "table") {
+      ctx.fillStyle = "#8a5a2b";
+      ctx.fillRect(fx + 6, fy + 12, CELL - 12, CELL - 20);
+      ctx.fillStyle = "#5b3a1e";
+      ctx.fillRect(fx + 8, fy + CELL - 10, 5, 8);
+      ctx.fillRect(fx + CELL - 13, fy + CELL - 10, 5, 8);
+    } else if (f.kind === "shelf") {
+      ctx.fillStyle = "#6a4a2a";
+      ctx.fillRect(fx + 4, fy + 4, CELL - 8, CELL - 10);
+      ctx.fillStyle = "#e8c840";
+      ctx.fillRect(fx + 8, fy + 8, 8, 6);
+      ctx.fillStyle = "#6ad2ff";
+      ctx.fillRect(fx + 20, fy + 8, 8, 6);
+    } else {
+      const pot = sprites.tiles.get(Tile.Flower);
+      if (pot) ctx.drawImage(pot, fx, fy);
+    }
+  }
+  if (interior.occupant) {
+    const pair = sprites.roles[interior.occupant.role] ?? sprites.roles["artisan"];
+    if (pair) ctx.drawImage(pair[Math.floor(performance.now() / 400) % 2 === 0 ? 0 : 1], ox + 3 * CELL, oy + 2 * CELL);
+    ctx.font = '14px "DotGothic16", monospace';
+    ctx.fillStyle = "#9ab";
+    ctx.fillText(interior.occupant.id, ox + 2 * CELL, oy + CELL + 6);
+  }
+  const heroPair2 = sprites.heroFor(titleTier(title));
+  ctx.drawImage(heroPair2[0], ox + interior.px * CELL, oy + interior.py * CELL);
+  ctx.font = '15px "DotGothic16", monospace';
+  ctx.fillStyle = "#7a879c";
+  ctx.fillText("でぐち(みなみ)か Esc で そとへ / となりで Enter: はなす", ox, oy + ROOM_H * CELL + 14);
+  log.render(ctx, w, h);
+  ui.render(ctx, w, h);
+}
+
 let last = performance.now();
 function frame(now: number): void {
+  if (scene === "interior") {
+    renderInterior();
+    last = now;
+    requestAnimationFrame(frame);
+    return;
+  }
   if (scene === "title") {
     renderTitle();
     last = now;

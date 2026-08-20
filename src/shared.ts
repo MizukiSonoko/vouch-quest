@@ -27,12 +27,13 @@ export interface RegionView {
       readonly overrides: Readonly<Record<string, Stance>>;
     };
   };
-  readonly openProposal: { readonly proposedBy: string; readonly votes: readonly string[] } | null;
+  readonly openProposal: { readonly proposedBy: string; readonly votes: readonly string[]; readonly change?: Record<string, unknown> } | null;
 }
 
 export interface AgentView {
   readonly id: string;
   readonly region: string;
+  readonly admittedAtSeq?: number;
   readonly role: "artisan" | "merchant" | "broker" | "treasury";
   readonly balances: { readonly credit: number; readonly currency: number };
   readonly reputation: number;
