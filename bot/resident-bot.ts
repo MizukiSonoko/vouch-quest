@@ -18,7 +18,7 @@
 // Env: BOT_SEED (required, base secret), VOUCH_NODE_URL (default loopback).
 
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { keyPairFromSeed } from "vouch-core";
 import { VouchClient } from "./src/client";
 
@@ -709,6 +709,108 @@ async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region
   await sleep(900);
 }
 
+// --- responding to players ------------------------------------------------------
+// The villagers ANSWER what players do to them: a confession may be returned,
+// a delivered good is paid for, a get-well herb cures and earns thanks. A tiny
+// host-local watermark (~/vouch-data/bot-mind.json) remembers the last log seq
+// already answered, so nothing is paid twice. World truth stays in the log.
+
+const MIND_PATH = process.env["BOT_MIND_PATH"] ?? `${process.env["HOME"]}/vouch-data/bot-mind.json`;
+
+function loadMind(): { answeredSeq: number } {
+  try {
+    const m = JSON.parse(readFileSync(MIND_PATH, "utf8")) as { answeredSeq?: number };
+    return { answeredSeq: m.answeredSeq ?? 0 };
+  } catch {
+    return { answeredSeq: 0 };
+  }
+}
+
+function saveMind(m: { answeredSeq: number }): void {
+  writeFileSync(MIND_PATH, JSON.stringify(m));
+}
+
+const KIND_PRICES: Record<string, number> = {
+  herb: 8, torch: 12, tsubo: 15, shield: 30, sword: 45, gem: 80, crown: 150,
+  bread: 6, fish: 7, sakana: 7, yasai: 5, lantern: 12, rope: 8, boots: 14, tea: 10, brick: 9, gear: 16,
+};
+
+function priceOf(kind: string): number {
+  if (KIND_PRICES[kind] !== undefined) return KIND_PRICES[kind];
+  try {
+    const g = JSON.parse(readFileSync(process.env["GENOME_PATH"] ?? `${process.env["HOME"]}/vouch-data/genome.json`, "utf8")) as {
+      wares?: { kind: string; price: number }[];
+    };
+    return g.wares?.find((w) => w.kind === kind)?.price ?? 5;
+  } catch {
+    return 5;
+  }
+}
+
+function isPlayerAgent(agentId: string): boolean {
+  const n = bareName(agentId);
+  return !(TROUPE as readonly string[]).includes(n) && !isBotFolk(agentId) && n !== "Enma" && !agentId.startsWith("treasury@");
+}
+
+async function respondToPlayers(w: { agents: Agent[]; regions: Region[]; items: Item[]; events: LogEvent[] }): Promise<void> {
+  const mind = loadMind();
+  const fresh = w.events.filter((e) => e.seq > mind.answeredSeq);
+  const isOurs = (agentId: string): boolean => (TROUPE as readonly string[]).includes(bareName(agentId)) || isBotFolk(agentId);
+  let acted = 0;
+
+  for (const e of fresh) {
+    if (acted >= 6) break;
+    const p = e.payload;
+    try {
+      if (e.type === "agent.vouched") {
+        // A player's confession or trust: often return the feeling.
+        const from = typeof p["from"] === "string" ? (p["from"] as string) : "";
+        const to = typeof p["to"] === "string" ? (p["to"] as string) : "";
+        if (from && to && isPlayerAgent(from) && isOurs(to) && rand() < 0.7) {
+          const me = w.agents.find((x) => x.id === to);
+          if (me && me.region !== AFTERLIFE) {
+            const c = clientFor(to);
+            await ensureRegistered(c, to);
+            say(to, `answers ${from}'s feelings`, await c.vouch(to, from, 1));
+            acted++;
+            await sleep(900);
+          }
+        }
+      } else if (e.type === "item.transferred") {
+        const from = typeof p["from"] === "string" ? (p["from"] as string) : "";
+        const to = typeof p["to"] === "string" ? (p["to"] as string) : "";
+        const itemId = typeof p["itemId"] === "string" ? (p["itemId"] as string) : "";
+        if (!from || !to || !isPlayerAgent(from) || !isOurs(to)) continue;
+        const me = w.agents.find((x) => x.id === to);
+        if (!me || me.region === AFTERLIFE) continue;
+        const item = w.items.find((it) => it.id === itemId);
+        const kind = item?.kind ?? itemId.replace(/[0-9a-z]{6}$/, "");
+        const c = clientFor(to);
+        await ensureRegistered(c, to);
+        if (kind === "herb") {
+          // お見舞い: the herb works — the patient recovers and pays a small thanks.
+          const myByoki = w.items.find((it) => it.owner === to && it.kind === BYOKI);
+          if (myByoki) {
+            say(to, "recovers thanks to the get-well herb", await c.transferItem(to, myByoki.id, `treasury@${me.region}`));
+            await sleep(900);
+          }
+          if (me.balances.currency >= 3) say(to, `thanks ${from} for the visit`, await c.transfer(to, from, 3));
+        } else {
+          // 納品: pay the fair price plus a thank-you margin.
+          const pay = Math.min(priceOf(kind) + 2, me.balances.currency);
+          if (pay >= 1) say(to, `pays ${from} for the ${kind}`, await c.transfer(to, from, pay));
+        }
+        acted++;
+        await sleep(900);
+      }
+    } catch (error) {
+      say("mind", "stumbled:", error instanceof Error ? error.message : String(error));
+    }
+  }
+  const top = w.events[w.events.length - 1];
+  saveMind({ answeredSeq: top ? top.seq : mind.answeredSeq });
+}
+
 // --- the estate escrow: a listed bot village is honestly SOLD -------------------
 // When a bot-owned region carries a salePrice and someone pays the owner's agent
 // at least that price AFTER the listing, the owner honors the deal on their next
@@ -787,3 +889,4 @@ if (wakingProfs.length > 0) console.log(`genome-born about: ${wakingProfs.map((p
 for (const p of wakingProfs) await genomeAct(p, world);
 
 await honorEstateSales(world);
+await respondToPlayers(world);

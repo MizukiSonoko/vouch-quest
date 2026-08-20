@@ -37,6 +37,16 @@ export class WeddingBook {
     return null;
   }
 
+  /** The spouse of an agent, if any. */
+  partnerOf(agentId: string): string | null {
+    for (const pair of this.married) {
+      const [a, b] = pair.split("|");
+      if (a === agentId) return b ?? null;
+      if (b === agentId) return a ?? null;
+    }
+    return null;
+  }
+
   /** Whether an agent already has a spouse on record. */
   isMarried(agentId: string): boolean {
     for (const pair of this.married) {

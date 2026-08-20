@@ -7,14 +7,14 @@
 import type { AgentView, ItemView, LogEventView, Snapshot } from "../shared";
 import { dayPhase, ParticleField, SkyShow, Weather, Wildlife } from "./ambience";
 import { npcLines, registerChatter } from "./dialogue";
-import { AFTERLIFE, BYOKI, foldLife, isChildName, isDead, WeddingBook } from "./life";
+import { AFTERLIFE, BYOKI, CHILD_NAMES, foldLife, isChildName, isDead, WeddingBook } from "./life";
 import { eventToMessage } from "./feed";
 import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, villageContains, type WorldMap } from "./map";
 import { loadGenome } from "./genome";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
 import { classifyRegime, type GovernanceValue, lawLayer, lawText, municipalRank, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
 import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
-import { allWares, canShopHere, CATALOG, friendlyPairs, kindName, prefectures, registerKindNames, registerWares, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
+import { allWares, canShopHere, CATALOG, friendlyPairs, kindName, prefectures, registerKindNames, registerWares, STANCE_COLOR, STANCE_JA, stanceToward, type Ware } from "./shop";
 import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
 import { buildSprites, CELL } from "./sprites";
 import { drawText, drawWindow, Info, Menu, MessageLog, TextInput, UiStack } from "./ui";
@@ -64,13 +64,15 @@ interface Journal {
   visited: string[];
   critters: string[];
   rides: number;
+  /** Crafts learned through でしいり (apprenticeship to genome-born artisans). */
+  learned: string[];
 }
 function journal(): Journal {
   try {
     const j = JSON.parse(localStorage.getItem(JOURNAL_KEY) ?? "{}") as Partial<Journal>;
-    return { visited: j.visited ?? [], critters: j.critters ?? [], rides: j.rides ?? 0 };
+    return { visited: j.visited ?? [], critters: j.critters ?? [], rides: j.rides ?? 0, learned: j.learned ?? [] };
   } catch {
-    return { visited: [], critters: [], rides: 0 };
+    return { visited: [], critters: [], rides: 0, learned: [] };
   }
 }
 function saveJournal(j: Journal): void {
@@ -546,6 +548,40 @@ function biographyOf(agentId: string): string[] {
   return lines;
 }
 
+/** The ware this villager wishes for — deterministic, so the bot side can pay
+ * a fair thanks for ANY delivered good without needing to agree on the wish. */
+function wantOf(agent: AgentView): Ware | null {
+  if (agent.role !== "merchant" && agent.role !== "broker") return null;
+  if (agent.balances.currency < 15) return null;
+  const wares = allWares();
+  if (wares.length === 0) return null;
+  let h = 0;
+  for (let i = 0; i < agent.id.length; i++) h = (Math.imul(h, 31) + agent.id.charCodeAt(i)) | 0;
+  return wares[Math.abs(h) % wares.length] ?? null;
+}
+
+/** たいまつ: a lit torch pushes back the night around the hero for a while. */
+let torchUntil = 0;
+
+const OMIKUJI = ["だいきち! きょうは しんらいが めぐる ひ。", "きち。とりひきに よき ひ。", "ちゅうきち。たびに でるが よい。", "しょうきち。ちいさな しんせつが かえってくる。", "すえきち。あわてず こつこつ。", "きょう…は きにせず わらって すごせ。"];
+
+function useItem(item: ItemView): void {
+  if (item.kind === "torch") {
+    torchUntil = performance.now() + 180_000;
+    log.push("たいまつに ひを ともした! しばらく よみちが あかるい。");
+    se("confirm");
+    ui.clear();
+  } else if (item.kind === "tsubo") {
+    let h = 0;
+    for (let i = 0; i < item.id.length; i++) h = (Math.imul(h, 31) + item.id.charCodeAt(i)) | 0;
+    ui.push(new Info("つぼうらない", ["つぼに みみを あてると こえが きこえた…", `「${OMIKUJI[Math.abs(h) % OMIKUJI.length]}」`], () => ui.clear()));
+  } else if (item.kind === "herb") {
+    ui.push(new Info("やくそう", ["いま つかうほど つかれていない。", "びょうきの ひとに 「おみまい」で とどけると よろこばれる。"], () => ui.clear()));
+  } else {
+    ui.push(new Info(kindName(item.kind), [`${kindName(item.kind)}を ためつすがめつ ながめた。`, "いい しなものだ。だれかに おくっても よろこばれそうだ。"], () => ui.clear()));
+  }
+}
+
 function npcMenu(mob: Mob): void {
   const a = mob.agent;
   const items = myItems();
@@ -557,6 +593,10 @@ function npcMenu(mob: Mob): void {
         { label: "みのうえを きく", value: "bio" },
         { label: "ゴールドを わたす", value: "gold" },
         { label: "ほしょうする", value: "vouch" },
+        { label: "こくはくする", value: "propose", disabled: weddingBook.isMarried(a.id) || !!(snapshot?.me.agentId && weddingBook.isMarried(snapshot.me.agentId)) },
+        { label: "ほしいものを きく", value: "want" },
+        { label: "おみまいする (やくそう)", value: "care", disabled: !snapshot?.items.some((i) => i.owner === a.id && i.kind === BYOKI) || !myItems().some((i) => i.kind === "herb") },
+        { label: "でしいりする (10G)", value: "apprentice", disabled: !genomeProfOf(a.id) },
         { label: "どうぐを わたす", value: "item", disabled: items.length === 0 },
         { label: "やめる", value: "cancel" },
       ],
@@ -589,6 +629,54 @@ function npcMenu(mob: Mob): void {
           );
         } else if (value === "bio") {
           ui.push(new Info(`${a.id}の みのうえ`, biographyOf(a.id), () => ui.pop()));
+        } else if (value === "propose") {
+          ui.push(
+            new Menu(`${a.id.split("@")[0]}に おもいを つたえる? (さいだいの ほしょうを おくる)`, [
+              { label: "つたえる", value: "yes" },
+              { label: "やっぱり やめる", value: "cancel" },
+            ], (v) => {
+              if (v === "yes") {
+                void runAct({ kind: "vouch", to: a.id, weight: 5 }, "おもいを つたえる").then(() => {
+                  log.push(`${a.id.split("@")[0]}に おもいを つたえた… へんじは あいての こころ しだいだ。`);
+                });
+              }
+              ui.clear();
+            }, () => ui.clear()),
+          );
+        } else if (value === "want") {
+          const want = wantOf(a);
+          ui.push(new Info(a.id, want
+            ? [
+                `「${want.name}が ほしいなあ。」`,
+                "「もってきてくれたら おれいを はずむよ。」",
+                "(どうぐを わたすと、あいてが めをさましたとき だいきん+おれいを はらってくれる)",
+              ]
+            : ["「いまは とくに ほしいものは ないなあ。」"], () => ui.pop()));
+        } else if (value === "care") {
+          const herb = myItems().find((i) => i.kind === "herb");
+          if (herb) {
+            void runAct({ kind: "transferItem", itemId: herb.id, to: a.id }, "おみまいを とどける").then(() => {
+              log.push(`${a.id.split("@")[0]}に やくそうを とどけた。はやく よくなりますように…`);
+            });
+          }
+        } else if (value === "apprentice") {
+          const prof = genomeProfOf(a.id);
+          if (prof) {
+            const j = journal();
+            if (j.learned.includes(prof.craft)) {
+              ui.push(new Info(a.id, [`「${kindName(prof.craft)}の わざは もう おしえたよ。」`, "「あとは かずを こなすことだ。」"], () => ui.pop()));
+            } else {
+              void runAct({ kind: "transfer", to: a.id, amount: 10 }, "じゅぎょうりょうを はらう").then(() => {
+                const j2 = journal();
+                if (!j2.learned.includes(prof.craft)) {
+                  j2.learned.push(prof.craft);
+                  saveJournal(j2);
+                }
+                extraExtra(`でしいり! ${kindName(prof.craft)}づくりを ならった!`);
+                log.push("コマンドの「ものづくり」で じぶんでも つくれるようになった。");
+              });
+            }
+          }
         } else if (value === "gold") {
           ui.push(
             new TextInput(`いくら わたす? (もちがね ${heroAgent()?.balances.currency ?? 0}G)`, { numeric: true, maxLen: 7 }, (v) => {
@@ -1300,6 +1388,8 @@ function fieldMenu(): void {
         { label: "つよさ", value: "status" },
         { label: "クエスト", value: "quests" },
         { label: "どうぐ", value: "items" },
+        { label: "ものづくり (ならったわざ)", value: "craft" },
+        { label: "こどもを むかえる", value: "child" },
         { label: "ちず (M)", value: "map" },
         { label: "むらを たてる", value: "found" },
         { label: "せかいの きろく", value: "world" },
@@ -1317,12 +1407,72 @@ function fieldMenu(): void {
                   `しょじきん: ${hero.balances.currency}G  くれじっと: ${hero.balances.credit}`,
                   `ひょうばん: ${hero.reputation}  しんらい: ${hero.trust}`,
                   `すんでいるむら: ${hero.region}`,
+                  (() => {
+                    const partner = weddingBook.partnerOf(hero.id);
+                    return partner ? `はんりょ: ${partner.split("@")[0]}` : "どくしん";
+                  })(),
+                  `ならったわざ: ${journal().learned.map((k) => kindName(k)).join("・") || "まだ ない"}`,
                 ]
               : ["まだ どこにも すんでいない。", "「むらを たてる」で じぶんのむらを つくろう!"], () => ui.pop()),
           );
         } else if (value === "items") {
           const items = myItems();
-          ui.push(new Info("どうぐぶくろ", items.length ? items.map((i) => `${kindName(i.kind)} (${i.id})`) : ["なにも もっていない。"], () => ui.pop()));
+          if (items.length === 0) {
+            ui.push(new Info("どうぐぶくろ", ["なにも もっていない。"], () => ui.pop()));
+          } else {
+            ui.push(
+              new Menu("どうぐぶくろ — つかう?", [
+                ...items.map((i) => ({ label: kindName(i.kind), value: i.id })),
+                { label: "とじる", value: "cancel" },
+              ], (itemId) => {
+                if (itemId === "cancel") return ui.clear();
+                const item = items.find((i) => i.id === itemId);
+                if (!item) return ui.clear();
+                useItem(item);
+              }, () => ui.clear()),
+            );
+          }
+        } else if (value === "craft") {
+          const learned = journal().learned;
+          if (learned.length === 0) {
+            ui.push(new Info("ものづくり", ["まだ わざを ならっていない。", "★じるしの しんかのたみに 「でしいり」して わざを ならおう。"], () => ui.pop()));
+          } else {
+            ui.push(
+              new Menu("なにを つくる? (むらの おきてに したがう)", [
+                ...learned.map((k) => ({ label: `${kindName(k)}を つくる`, value: k })),
+                { label: "やめる", value: "cancel" },
+              ], (k) => {
+                if (k !== "cancel") void runAct({ kind: "forage", itemKind: k }, `${kindName(k)}づくり`);
+                else ui.clear();
+              }, () => ui.clear()),
+            );
+          }
+        } else if (value === "child") {
+          const me = heroAgent();
+          const married = me ? weddingBook.isMarried(me.id) : false;
+          const myVillage = snapshot?.regions.find((r) => r.owner === snapshot?.me.heroName && r.id !== AFTERLIFE);
+          if (!me || !married) {
+            ui.push(new Info("こどもを むかえる", ["まずは はんりょが ひつようだ。", "きになる ひとに 「こくはく」して、おもいが かよえば ふうふに なれる。"], () => ui.pop()));
+          } else if (!myVillage) {
+            ui.push(new Info("こどもを むかえる", ["こどもを むかえるには じぶんの むらが いる。", "「むらを たてる」か、むらを かいとろう。"], () => ui.pop()));
+          } else {
+            const pick2 = CHILD_NAMES[Math.floor(Math.random() * CHILD_NAMES.length)] ?? "Kotaro";
+            const suffix = (snapshot?.agents ?? []).filter((a2) => (a2.id.split("@")[0] ?? "").replace(/\d+$/, "") === pick2).length;
+            const childName = suffix > 0 ? `${pick2}${suffix + 1}` : pick2;
+            ui.push(
+              new Menu(`${myVillage.displayName}に あかちゃんを むかえる? (なまえ: ${childName})`, [
+                { label: "むかえる", value: "yes" },
+                { label: "やめる", value: "cancel" },
+              ], (v) => {
+                if (v === "yes") {
+                  void runAct({ kind: "admit", agentName: childName, region: myVillage.id, role: "artisan", currency: 10 }, "こどもを むかえる").then(() => {
+                    extraExtra(`${myVillage.displayName}に あかちゃんが うまれた! なまえは ${childName}!`);
+                  });
+                }
+                ui.clear();
+              }, () => ui.clear()),
+            );
+          }
         } else if (value === "quests") {
           questJournal();
         } else if (value === "map") {
@@ -2467,6 +2617,15 @@ function render(): void {
       grad.addColorStop(1, "rgba(255, 214, 110, 0)");
       ctx.fillStyle = grad;
       ctx.fillRect(gx2 - 70, gy2 - 70, 140, 140);
+    }
+    if (performance.now() < torchUntil) {
+      const hx = player.px - camX + CELL / 2;
+      const hy = player.py - camY + CELL / 2;
+      const tg = ctx.createRadialGradient(hx, hy, 8, hx, hy, 170);
+      tg.addColorStop(0, "rgba(255, 200, 110, 0.42)");
+      tg.addColorStop(1, "rgba(255, 200, 110, 0)");
+      ctx.fillStyle = tg;
+      ctx.fillRect(hx - 170, hy - 170, 340, 340);
     }
     ctx.globalCompositeOperation = "source-over";
   }
