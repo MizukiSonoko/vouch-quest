@@ -263,6 +263,10 @@ const LAMP = [
   "gggggggggggggggg",
 ];
 
+/** A wall with a lit window, plaster and timber flavors. */
+const winIn = (wall: readonly string[]): string[] =>
+  wall.map((row, y) => (y >= 5 && y <= 9 ? `${row.slice(0, 5)}xyyyyyx${row.slice(12)}`.slice(0, 16) : row));
+
 /** A wooden wall/door pair for the cabin-style houses. */
 const WALL_WOOD = WALL.map((row) => row.replaceAll("h", "F").replaceAll("H", "b"));
 const DOOR_WOOD = WALL_WOOD.map((row, y) => {
@@ -416,6 +420,8 @@ export function buildSprites(): SpriteSet {
     [Tile.Well, draw(WELL)],
     [Tile.Farm, draw(FARM)],
     [Tile.Lamp, draw(LAMP)],
+    [Tile.WallWindow, draw(winIn(WALL))],
+    [Tile.WallWoodWindow, draw(winIn(WALL_WOOD))],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();

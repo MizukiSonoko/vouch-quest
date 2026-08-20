@@ -494,6 +494,7 @@ function fieldMenu(): void {
         { label: "ちず (M)", value: "map" },
         { label: "むらを たてる", value: "found" },
         { label: "せかいの きろく", value: "world" },
+        { label: "せかいのログ (L)", value: "rawlog" },
         { label: `おと: ${bgmEnabled() ? "ON" : "OFF"}`, value: "sound" },
         { label: "やめる", value: "cancel" },
       ],
@@ -534,6 +535,9 @@ function fieldMenu(): void {
           );
         } else if (value === "world") {
           worldRecords();
+        } else if (value === "rawlog") {
+          ui.pop();
+          ui.push(new LogViewer());
         } else ui.clear();
       },
       () => ui.clear(),
@@ -574,6 +578,48 @@ function interact(): void {
     if (village) return ui.push(new Info(`${village.displayName}の きんこ`, [`むらの きんこには ${treasury?.balances.currency ?? 0}G はいっている。`, "てをふれては いけない きがする…"], () => ui.pop()));
   }
   fieldMenu();
+}
+
+// ---- raw log viewer (the meta view: seq / type / raw payload, newest first) ----
+
+class LogViewer {
+  private top = 0;
+
+  handleKey(keyName: string): void {
+    const rows = 16;
+    const max = Math.max(0, allEvents.length - rows);
+    if (keyName === "ArrowDown" || keyName === "s") this.top = Math.min(this.top + 1, max);
+    else if (keyName === "ArrowUp" || keyName === "w") this.top = Math.max(0, this.top - 1);
+    else if (["Escape", "Enter", " ", "l", "L", "x", "z"].includes(keyName)) ui.clear();
+  }
+
+  render(c: CanvasRenderingContext2D, width: number, height: number): void {
+    const w = width - 48;
+    const h = height - 96;
+    const x = 24;
+    const y = 24;
+    drawWindow(c, x, y, w, h);
+    drawText(c, `せかいのログ (メタ)  ${allEvents.length}けん`, x + 24, y + 14, "#ffd75e");
+    c.font = '14px "DotGothic16", monospace';
+    const rows = 16;
+    const newestFirst = [...allEvents].reverse();
+    const page = newestFirst.slice(this.top, this.top + rows);
+    page.forEach((e, i) => {
+      const ry = y + 52 + i * 25;
+      c.fillStyle = "#8fd0ff";
+      c.fillText(`#${e.seq}`.padStart(5), x + 20, ry);
+      c.fillStyle = "#ffd75e";
+      c.fillText(e.type.padEnd(28), x + 70, ry);
+      c.fillStyle = "#9ab";
+      c.fillText(`by ${e.actor}`, x + 320, ry);
+      c.fillStyle = "#ffffff";
+      const payload = JSON.stringify(e.payload);
+      const room = Math.floor((w - 460) / 7.2);
+      c.fillText(payload.length > room ? `${payload.slice(0, room)}…` : payload, x + 420, ry);
+    });
+    c.fillStyle = "#9ab";
+    c.fillText(`↑↓:スクロール  Esc:とじる  (${this.top + 1}〜${Math.min(this.top + rows, allEvents.length)})`, x + 20, y + h - 28);
+  }
 }
 
 // ---- world map overlay ------------------------------------------------------
@@ -671,6 +717,11 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "m" || e.key === "M") {
     se("confirm");
     ui.push(new MapOverlay(() => ui.clear()));
+    return;
+  }
+  if (e.key === "l" || e.key === "L") {
+    se("confirm");
+    ui.push(new LogViewer());
     return;
   }
   if (e.key === "Enter" || e.key === " " || e.key === "z") {

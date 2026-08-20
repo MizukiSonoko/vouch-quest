@@ -44,6 +44,8 @@ export const enum Tile {
   Well = 26,
   Farm = 27,
   Lamp = 28,
+  WallWindow = 29,
+  WallWoodWindow = 30,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -71,6 +73,8 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.Well,
   Tile.Farm,
   Tile.Lamp,
+  Tile.WallWindow,
+  Tile.WallWoodWindow,
 ]);
 
 /** Village slot origins (top-left), spaced for the largest possible plot (20x15). */
@@ -182,8 +186,59 @@ function carveVillage(
   set(tiles, gx, vy + h - 2, Tile.Path);
   set(tiles, gx, vy + h, Tile.Path);
 
-  // Civic row: hall / mint / court in a village-specific order, jittered inside
-  // three zones so no two villages share a skyline.
+  const inside = (x: number, y: number): boolean => x > vx && x < vx + w - 1 && y > vy && y < vy + h - 1;
+  const protectedCells = new Set<string>();
+  const key = (x: number, y: number): string => `${x},${y}`;
+  for (let y = vy + 1; y < vy + h; y++) protectedCells.add(key(gx, y)); // the gate lane stays open
+
+  interface Build {
+    readonly roof: Tile;
+    readonly wall: Tile;
+    readonly door: Tile;
+    readonly window: Tile;
+  }
+
+  /** Draw a building with a 2-row roof and 1-2 wall rows; returns its door and cells. */
+  const drawBuilding = (
+    bx: number,
+    by: number,
+    bw: number,
+    roofRows: number,
+    wallRows: number,
+    b: Build,
+  ): { door: readonly [number, number]; cells: (readonly [number, number])[] } => {
+    const cells: (readonly [number, number])[] = [];
+    for (let r = 0; r < roofRows; r++) {
+      for (let x = bx; x < bx + bw; x++) {
+        set(tiles, x, by + r, b.roof);
+        cells.push([x, by + r] as const);
+      }
+    }
+    const doorX = bx + (bw <= 2 ? Math.floor(rng() * bw) : 1 + Math.floor(rng() * (bw - 2)));
+    const doorY = by + roofRows + wallRows - 1;
+    for (let r = 0; r < wallRows; r++) {
+      for (let x = bx; x < bx + bw; x++) {
+        const y = by + roofRows + r;
+        const isDoor = y === doorY && x === doorX;
+        const tile = isDoor ? b.door : rng() < 0.3 ? b.window : b.wall;
+        set(tiles, x, y, tile);
+        cells.push([x, y] as const);
+      }
+    }
+    return { door: [doorX, doorY] as const, cells };
+  };
+
+  const overlapsProtected = (bx: number, by: number, bw: number, bh: number): boolean => {
+    for (let y = by; y < by + bh + 1; y++) {
+      for (let x = bx; x < bx + bw; x++) {
+        if (!inside(x, y) || protectedCells.has(key(x, y))) return true;
+      }
+    }
+    return false;
+  };
+
+  // Civic buildings, placed freely — each protects its footprint and doorstep so it
+  // stays reachable no matter how the houses later crowd around it.
   const order: readonly ["hall" | "mint" | "court", Tile, Tile][] = [
     ["hall", Tile.HallRoof, Tile.HallDoor],
     ["mint", Tile.MintRoof, Tile.MintDoor],
@@ -196,71 +251,85 @@ function carveVillage(
     shuffled[i] = shuffled[j]!;
     shuffled[j] = a;
   }
-  const zone = Math.floor((w - 2) / 3);
   const doors: Partial<Record<"hall" | "mint" | "court", readonly [number, number]>> = {};
   shuffled.forEach(([kind, roof, door], i) => {
-    const jitter = Math.floor(rng() * Math.max(1, zone - 3));
-    const bx = Math.min(vx + 1 + i * zone + jitter, vx + w - 4);
-    for (let x = bx; x < bx + 3; x++) {
-      set(tiles, x, vy + 1, roof);
-      set(tiles, x, vy + 2, Tile.HouseWall);
+    const roofRows = 2;
+    const wallRows = kind === "hall" ? 2 : 1;
+    const bh = roofRows + wallRows;
+    let placed = false;
+    for (let tries = 0; tries < 60 && !placed; tries++) {
+      const bx = vx + 1 + Math.floor(rng() * (w - 4));
+      const by = vy + 1 + Math.floor(rng() * Math.max(1, h - bh - 4));
+      if (overlapsProtected(bx, by, 3, bh)) continue;
+      const built = drawBuilding(bx, by, 3, roofRows, wallRows, { roof, wall: Tile.HouseWall, door, window: Tile.WallWindow });
+      for (const [cx, cy] of built.cells) protectedCells.add(key(cx, cy));
+      protectedCells.add(key(built.door[0], built.door[1] + 1));
+      set(tiles, built.door[0], built.door[1] + 1, (built.door[0] + built.door[1]) % 7 === 0 ? Tile.Grass2 : Tile.Grass);
+      doors[kind] = built.door;
+      placed = true;
     }
-    set(tiles, bx + 1, vy + 2, door);
-    doors[kind] = [bx + 1, vy + 2] as const;
+    if (!placed) {
+      // Crowded corner case: fall back to a fixed spot along the top.
+      const bx = vx + 1 + i * 5;
+      const built = drawBuilding(bx, vy + 1, 3, roofRows, wallRows, { roof, wall: Tile.HouseWall, door, window: Tile.WallWindow });
+      for (const [cx, cy] of built.cells) protectedCells.add(key(cx, cy));
+      protectedCells.add(key(built.door[0], built.door[1] + 1));
+      doors[kind] = built.door;
+    }
   });
-  const hall = doors.hall ?? ([vx + 2, vy + 2] as const);
-  const mint = doors.mint ?? ([vx + 7, vy + 2] as const);
-  const court = doors.court ?? ([vx + 12, vy + 2] as const);
+  const hall = doors.hall ?? ([vx + 2, vy + 3] as const);
+  const mint = doors.mint ?? ([vx + 7, vy + 3] as const);
+  const court = doors.court ?? ([vx + 12, vy + 3] as const);
+
+  // Houses: FREE placement — overlap is allowed, so clusters, terraces, and alleys
+  // emerge. A door swallowed by a later extension just means the family built on.
+  const ROOFS: readonly Tile[] = [Tile.HouseRoof, Tile.RoofGreen, Tile.RoofBlue, Tile.RoofBrown];
+  const houseDoors: { door: readonly [number, number]; tile: Tile }[] = [];
+  const houses = Math.min(Math.max(residents, 1), 8);
+  for (let i = 0; i < houses; i++) {
+    const bw = 2 + Math.floor(rng() * 3); // 2..4 wide
+    const roofRows = rng() < 0.6 ? 2 : 1;
+    const bh = roofRows + 1;
+    const roof = ROOFS[Math.floor(rng() * ROOFS.length)] ?? Tile.HouseRoof;
+    const wood = rng() < 0.4;
+    const build: Build = wood
+      ? { roof, wall: Tile.WallWood, door: Tile.DoorWood, window: Tile.WallWoodWindow }
+      : { roof, wall: Tile.HouseWall, door: Tile.HouseDoor, window: Tile.WallWindow };
+    for (let tries = 0; tries < 20; tries++) {
+      const bx = vx + 1 + Math.floor(rng() * (w - 1 - bw));
+      const by = vy + 1 + Math.floor(rng() * Math.max(1, h - bh - 3));
+      if (overlapsProtected(bx, by, bw, bh)) continue;
+      const built = drawBuilding(bx, by, bw, roofRows, 1, build);
+      houseDoors.push({ door: built.door, tile: build.door });
+      break;
+    }
+  }
+  // Keep only doors that survived later construction, and clear each doorstep.
+  const spots: (readonly [number, number])[] = [];
+  for (const { door, tile } of houseDoors) {
+    if (get(tiles, door[0], door[1]) !== tile) continue;
+    const front: readonly [number, number] = [door[0], door[1] + 1];
+    if (!inside(front[0], front[1]) || protectedCells.has(key(front[0], front[1]))) continue;
+    set(tiles, front[0], front[1], (front[0] + front[1]) % 7 === 0 ? Tile.Grass2 : Tile.Grass);
+    spots.push(front);
+  }
 
   const isFree = (x: number, y: number): boolean => {
     const t = get(tiles, x, y);
-    return (t === Tile.Grass || t === Tile.Grass2) && x !== gx;
+    return (t === Tile.Grass || t === Tile.Grass2) && x !== gx && !protectedCells.has(key(x, y));
   };
 
-  // The treasury chest lands on a free wall-row cell (beside a civic building).
-  let chest: readonly [number, number] = [vx + w - 2, vy + 2];
-  for (let tries = 0; tries < 20; tries++) {
+  // The treasury chest lands on any free cell in the upper half of the village.
+  let chest: readonly [number, number] = [vx + w - 2, vy + h - 3];
+  for (let tries = 0; tries < 30; tries++) {
     const cx = vx + 1 + Math.floor(rng() * (w - 2));
-    if (isFree(cx, vy + 2)) {
-      chest = [cx, vy + 2] as const;
+    const cy = vy + 1 + Math.floor(rng() * Math.floor(h / 2));
+    if (isFree(cx, cy)) {
+      chest = [cx, cy] as const;
       break;
     }
   }
   set(tiles, chest[0], chest[1], Tile.Chest);
-
-  // Resident houses: candidate cells in loose rows below the civic row, shuffled.
-  const candidates: (readonly [number, number])[] = [];
-  for (let hy = vy + 4; hy + 2 <= vy + h - 3; hy += 3) {
-    for (let hx = vx + 2; hx + 2 <= vx + w - 2; hx += 5) {
-      const jx = hx + Math.floor(rng() * 2);
-      if (jx + 2 > vx + w - 2) continue;
-      if (gx >= jx && gx <= jx + 2) continue; // keep the gate column clear
-      candidates.push([jx, hy] as const);
-    }
-  }
-  for (let i = candidates.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    const a = candidates[i]!;
-    candidates[i] = candidates[j]!;
-    candidates[j] = a;
-  }
-  const houses = candidates.slice(0, Math.min(Math.max(residents, 1), candidates.length));
-  const spots: (readonly [number, number])[] = [];
-  const ROOFS: readonly Tile[] = [Tile.HouseRoof, Tile.RoofGreen, Tile.RoofBlue, Tile.RoofBrown];
-  for (const [hx, hy] of houses) {
-    // Every house has its own build: roof color, plaster or timber, and width.
-    const roof = ROOFS[Math.floor(rng() * ROOFS.length)] ?? Tile.HouseRoof;
-    const wood = rng() < 0.4;
-    const wall = wood ? Tile.WallWood : Tile.HouseWall;
-    const door = wood ? Tile.DoorWood : Tile.HouseDoor;
-    const width = rng() < 0.3 && hx + 3 <= vx + w - 2 && !(gx >= hx && gx <= hx + 3) ? 4 : 3;
-    for (let x = hx; x < hx + width; x++) {
-      set(tiles, x, hy, roof);
-      set(tiles, x, hy + 1, wall);
-    }
-    set(tiles, hx + 1, hy + 1, door);
-    spots.push([hx + 1, hy + 2] as const);
-  }
 
   // The gate signboard.
   let sign: readonly [number, number] = [gx > vx + 3 ? gx - 2 : gx + 2, vy + h - 2];
@@ -290,11 +359,7 @@ function carveVillage(
       for (let tries = 0; tries < 15; tries++) {
         const dx = vx + 1 + Math.floor(rng() * (w - 2));
         const dy = vy + 3 + Math.floor(rng() * (h - 5));
-        // Never block a doorway: the cell below any door stays clear.
-        const belowDoor = [hall, mint, court, ...houses.map(([hx, hy]) => [hx + 1, hy + 1] as const)].some(
-          ([px, py]) => dx === px && dy === py + 1,
-        );
-        if (isFree(dx, dy) && !belowDoor) {
+        if (isFree(dx, dy) && !spots.some(([sx, sy]) => sx === dx && sy === dy)) {
           set(tiles, dx, dy, tile);
           break;
         }
@@ -307,15 +372,12 @@ function carveVillage(
   for (let i = 0; i < farms; i++) {
     for (let tries = 0; tries < 12; tries++) {
       const fx = vx + 2 + Math.floor(rng() * (w - 5));
-      const fy = vy + 4 + Math.floor(rng() * (h - 7));
+      const fy = vy + 3 + Math.floor(rng() * (h - 6));
       if (!isFree(fx, fy)) continue;
       for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
         const px = fx + dx;
         const py = fy + dy;
-        const nearDoor = [hall, mint, court, ...houses.map(([hx2, hy2]) => [hx2 + 1, hy2 + 1] as const)].some(
-          ([qx, qy]) => px === qx && py === qy + 1,
-        );
-        if (isFree(px, py) && !nearDoor) set(tiles, px, py, Tile.Farm);
+        if (isFree(px, py) && !spots.some(([sx, sy]) => sx === px && sy === py)) set(tiles, px, py, Tile.Farm);
       }
       break;
     }
