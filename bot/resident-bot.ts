@@ -651,18 +651,22 @@ function loadGenomeProfs(): GenomeProf[] {
 }
 
 async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region[] }): Promise<void> {
-  const client = clientFor(prof.name);
   try {
-    await ensureRegistered(client, prof.name);
     const me = w.agents.find((a) => a.id.startsWith(`${prof.name}@`) && a.region !== AFTERLIFE);
     if (!me) {
+      // Birth: register the full id under its own key, then a town owner hires it.
       const botOwned = w.regions.filter((r) => r.owner && (TROUPE as readonly string[]).includes(r.owner) && r.lifecycle === "active");
       const home = botOwned.length > 0 ? pick(botOwned) : null;
       if (home?.owner) {
-        say(home.owner, `hires genome-born ${prof.name} into ${home.id}`, await clientFor(home.owner).admit(home.owner, `${prof.name}@${home.id}`, home.id, prof.role, 70));
+        const agentId = `${prof.name}@${home.id}`;
+        await ensureRegistered(clientFor(agentId), agentId);
+        await sleep(600);
+        say(home.owner, `hires genome-born ${prof.name} into ${home.id}`, await clientFor(home.owner).admit(home.owner, agentId, home.id, prof.role, 70));
       }
       return;
     }
+    const client = clientFor(me.id);
+    await ensureRegistered(client, me.id);
     const region = w.regions.find((r) => r.id === me.region);
     const neighbors = w.agents.filter((a) => a.region === me.region && a.id !== me.id && a.role !== "treasury");
     const roll = rand();
