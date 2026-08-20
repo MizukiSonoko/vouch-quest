@@ -185,7 +185,9 @@ function occupied(x: number, y: number): boolean {
 }
 
 function walkable(x: number, y: number): boolean {
-  return !!map && !isSolid(map, x, y) && !occupied(x, y);
+  // People pass THROUGH each other (narrow lanes must never jam) — DQ crowds,
+  // not DQ collisions. occupied() is kept only for spawn placement.
+  return !!map && !isSolid(map, x, y);
 }
 
 /** The hero's layer-aware step rule; NPCs always use ground rules (walkable). */
@@ -645,7 +647,7 @@ function villageInfo(ctx: VillageContext): void {
   const treasury = snapshot?.agents.find((a) => a.id === `treasury@${region.id}`);
   ui.push(
     new Info(`むら「${region.displayName}」(${region.id})`, [
-      `あるじ: ${region.owner ?? "なし"}  じょうたい: ${region.lifecycle}`,
+      `あるじ: ${region.owner ?? "なし"}  じょうたい: ${region.lifecycle === "active" ? "うんえいちゅう" : "きゅうそん"}${region.salePrice !== null ? `  ★うりだしちゅう ${region.salePrice}G` : ""}`,
       (() => {
         const v = map?.villages.find((x) => x.regionId === region.id);
         return `きこう: ${BIOME_JA[v?.biome ?? Biome.Plains]}  はってん: ${["むら", "まち", "とし", "だいとし"][v?.tier ?? 0]}  でんき: ${v?.powered ? "つうでん" : "みでんか"}`;
@@ -790,6 +792,9 @@ function hallMenu(village: Village): void {
     new Menu(`${region.displayName} やくば`, [
       { label: "むらの じょうほう", value: "info" },
       { label: "むらの きろく (いれいひ)", value: "memorial" },
+      { label: region.salePrice !== null ? `この むらを かいとる (${region.salePrice}G)` : "かいとる (うりに でていない)", value: "buy", disabled: region.salePrice === null || ctx.isOwner || !heroAgent() },
+      { label: "ふどうさん (うる・ゆずる・たたむ)", value: "estate", disabled: !ctx.isOwner },
+      { label: ctx.isCouncil ? "ぜいせい (さいばんしょで ていあん)" : "ぜいせいを あらためる", value: "tax", disabled: !ctx.isOwner || ctx.isCouncil },
       { label: "しさつする (まなび)", value: "inspect", disabled: ctx.livesHere },
       { label: "この むらに ひっこす", value: "migrate", disabled: !heroAgent() || ctx.livesHere },
       { label: "いじゅうしゃを まねく", value: "admit", disabled: !ctx.isOwner },
@@ -805,7 +810,74 @@ function hallMenu(village: Village): void {
       },
       { label: "やめる", value: "cancel" },
     ], (value) => {
-      if (value === "memorial") {
+      if (value === "buy") {
+        const ownerAgent = snapshot?.agents.find((a2) => region.owner && a2.id.startsWith(`${region.owner}@`) && a2.role !== "treasury");
+        const price = region.salePrice ?? 0;
+        if (!ownerAgent) {
+          ui.push(new Info("ふどうさんや", ["あるじの うけとりぐちが みつからない。", "この とりひきは いまは できない。"], () => ui.pop()));
+          return;
+        }
+        ui.push(
+          new Menu(`${region.displayName}を ${price}Gで かいとる? (だいきんは あるじ ${ownerAgent.id}へ)`, [
+            { label: `はらう (${price}G)`, value: "pay" },
+            { label: "やめる", value: "cancel" },
+          ], (v) => {
+            if (v === "pay") {
+              void runAct({ kind: "buyRegion", regionId: region.id, ownerAgent: ownerAgent.id, price }, `${region.displayName}の かいとり`).then(() => {
+                log.push("だいきんを はらったなら、あるじが てつづきを すませば むらは あなたのもの。しばし またれよ…");
+              });
+            }
+            ui.clear();
+          }, () => ui.clear()),
+        );
+      } else if (value === "estate") {
+        ui.push(
+          new Menu(`${region.displayName} — ふどうさん`, [
+            { label: region.salePrice !== null ? `うりね を かえる (いま ${region.salePrice}G)` : "うりにだす (ねだんを つける)", value: "list" },
+            { label: "うりやめ", value: "delist", disabled: region.salePrice === null },
+            { label: "ゆずりわたす (ただで)", value: "handover" },
+            { label: region.lifecycle === "active" ? "むらを たたむ (きゅうそん)" : "むらを ひらきなおす", value: "lifecycle" },
+            { label: "やめる", value: "cancel" },
+          ], (v) => {
+            if (v === "list") {
+              ui.push(new TextInput("いくらで うる? (G)", { numeric: true, maxLen: 6 }, (t) => {
+                const price = Number(t);
+                if (Number.isInteger(price) && price > 0) void runAct({ kind: "listRegion", regionId: region.id, price }, "うりにだす");
+                ui.clear();
+              }, () => ui.clear()));
+            } else if (v === "delist") {
+              void runAct({ kind: "listRegion", regionId: region.id, price: null }, "うりやめ");
+              ui.clear();
+            } else if (v === "handover") {
+              ui.push(new TextInput("だれに ゆずる? (romaji めいぎ)", { maxLen: 24 }, (to) => {
+                ui.push(new Menu(`ほんとうに ${region.displayName}を ${to}に ゆずる? もどせないぞ。`, [
+                  { label: "ゆずる", value: "yes" },
+                  { label: "やめる", value: "cancel" },
+                ], (v2) => {
+                  if (v2 === "yes") void runAct({ kind: "handoverRegion", regionId: region.id, to }, `${to}に ゆずる`);
+                  ui.clear();
+                }, () => ui.clear()));
+              }, () => ui.clear()));
+            } else if (v === "lifecycle") {
+              void runAct({ kind: "lifecycleRegion", regionId: region.id, lifecycle: region.lifecycle === "active" ? "dormant" : "active" }, "むらの とじひらき");
+              ui.clear();
+            } else ui.clear();
+          }, () => ui.clear()),
+        );
+      } else if (value === "tax") {
+        ui.push(
+          new Menu(`ぜいせい (いま ${Math.round(region.institutions.economyPolicy.baseCostRate * 100)}%)`, [
+            { label: "げんぜい 5%", value: "0.05" },
+            { label: "ちゅうよう 10%", value: "0.1" },
+            { label: "ひょうじゅん 20%", value: "0.2" },
+            { label: "じゅうぜい 30%", value: "0.3" },
+            { label: "やめる", value: "cancel" },
+          ], (v) => {
+            if (v !== "cancel") void runAct({ kind: "amendEconomy", regionId: region.id, baseCostRate: Number(v) }, "ぜいせいの あらため");
+            ui.clear();
+          }, () => ui.clear()),
+        );
+      } else if (value === "memorial") {
         ui.push(new Info(`${region.displayName} — むらの きろく`, memorialLines(region.id, region.displayName), () => ui.pop()));
       } else if (value === "info") villageInfo(ctx);
       else if (value === "inspect") inspectVillage(ctx);
@@ -896,9 +968,23 @@ function courtMenu(village: Village): void {
           new Menu("なにを ていあんする?", [
             { label: `どうぐづくり: ${ctx.mintingOpen ? "あるじのみに もどす" : "だれでもに ひらく"}`, value: "minting" },
             { label: "けんぽうかいせい (せいじたいせい)", value: "governance" },
+            { label: "ぜいせいかいせい", value: "tax" },
           ], (v) => {
             if (v === "minting") {
               void runAct({ kind: "proposeMinting", regionId: region.id, minting: ctx.mintingOpen ? "owner" : "anyone" }, "おきてを ていあんする");
+            } else if (v === "tax") {
+              ui.push(
+                new Menu(`ぜいせいかいせい (いま ${Math.round(region.institutions.economyPolicy.baseCostRate * 100)}%)`, [
+                  { label: "げんぜい 5%", value: "0.05" },
+                  { label: "ちゅうよう 10%", value: "0.1" },
+                  { label: "ひょうじゅん 20%", value: "0.2" },
+                  { label: "じゅうぜい 30%", value: "0.3" },
+                  { label: "やめる", value: "cancel" },
+                ], (v2) => {
+                  if (v2 !== "cancel") void runAct({ kind: "proposeEconomy", regionId: region.id, baseCostRate: Number(v2) }, "ぜいせいかいせいを ていあん");
+                  ui.clear();
+                }, () => ui.clear()),
+              );
             } else {
               regimePicker(region.id, "propose");
             }

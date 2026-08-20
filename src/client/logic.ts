@@ -37,6 +37,12 @@ export const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("proposeDiplomacy"), regionId, target: regionId, stance: z.enum(["absorb", "map", "reexamine", "reject"]) }),
   z.object({ kind: z.literal("proposeMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
   z.object({ kind: z.literal("proposeGovernance"), regionId, regime: z.enum(REGIMES as [Regime, ...Regime[]]) }),
+  z.object({ kind: z.literal("listRegion"), regionId, price: z.number().int().min(0).max(100_000).nullable() }),
+  z.object({ kind: z.literal("handoverRegion"), regionId, to: name }),
+  z.object({ kind: z.literal("lifecycleRegion"), regionId, lifecycle: z.enum(["active", "dormant"]) }),
+  z.object({ kind: z.literal("buyRegion"), regionId, ownerAgent: identifier, price: z.number().int().positive() }),
+  z.object({ kind: z.literal("amendEconomy"), regionId, baseCostRate: z.number().min(0).max(1) }),
+  z.object({ kind: z.literal("proposeEconomy"), regionId, baseCostRate: z.number().min(0).max(1) }),
 ]);
 
 export type Action = z.infer<typeof actionSchema>;
@@ -195,7 +201,54 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
         regionId: action.regionId,
         change: { policy: "items", value: { minting: action.minting } },
       }));
-
+    // --- the region market, opened to the hero ---------------------------------
+    case "listRegion": {
+      if (action.price !== null) {
+        // The market rule: only a dormant region can be listed. Close, then price.
+        const slept = await asOwner(wallet, hero, { kind: "lifecycle", regionId: action.regionId, lifecycle: "dormant" });
+        if (!slept.ok) return slept;
+        return asOwner(wallet, hero, { kind: "list", regionId: action.regionId, salePrice: action.price });
+      }
+      // Delist, then reopen for business.
+      const delisted = await asOwner(wallet, hero, { kind: "list", regionId: action.regionId, salePrice: null });
+      if (!delisted.ok) return delisted;
+      return asOwner(wallet, hero, { kind: "lifecycle", regionId: action.regionId, lifecycle: "active" });
+    }
+    case "handoverRegion": {
+      // A handover needs a listing; a gift is a 0G listing followed by the deed.
+      const slept = await asOwner(wallet, hero, { kind: "lifecycle", regionId: action.regionId, lifecycle: "dormant" });
+      if (!slept.ok) return slept;
+      const listed = await asOwner(wallet, hero, { kind: "list", regionId: action.regionId, salePrice: 0 });
+      if (!listed.ok) return listed;
+      return asOwner(wallet, hero, { kind: "handover", regionId: action.regionId, to: action.to });
+    }
+    case "lifecycleRegion":
+      return asOwner(wallet, hero, { kind: "lifecycle", regionId: action.regionId, lifecycle: action.lifecycle });
+    case "buyRegion":
+      // Buying is a trust trade: pay the asking price to the owner's agent; the
+      // owner (bot owners watch the log) signs the handover on their next waking.
+      return asAgent(wallet, hero, (agent) => ({ kind: "transfer", from: agent, to: action.ownerAgent, amount: action.price }));
+    case "amendEconomy":
+    case "proposeEconomy": {
+      const regions = (await reads.regions()) as RegionView[];
+      const region = regions.find((r) => r.id === action.regionId);
+      if (!region) return { ok: false, reason: "unknown-region" };
+      const cur = region.institutions.economyPolicy;
+      const change = {
+        policy: "economy",
+        value: {
+          baseCostRate: action.baseCostRate,
+          minCostRate: Math.min(cur.minCostRate, action.baseCostRate),
+          // The view does not expose these two; keep the world defaults.
+          repDiscount: 0.02,
+          creditPerTx: 1,
+        },
+      };
+      if (action.kind === "amendEconomy") {
+        return asOwner(wallet, hero, { kind: "amend", regionId: action.regionId, change });
+      }
+      return asAgent(wallet, hero, () => ({ kind: "propose", regionId: action.regionId, change }));
+    }
   }
 }
 

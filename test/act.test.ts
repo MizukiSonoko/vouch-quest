@@ -60,3 +60,17 @@ describe("newItemId", () => {
     expect(/^[a-z0-9]+$/.test(id)).toBe(true);
   });
 });
+
+describe("the region market actions", () => {
+  const { actionSchema } = require("../src/client/logic");
+  test("market/lifecycle/economy actions validate", () => {
+    expect(actionSchema.safeParse({ kind: "listRegion", regionId: "asahi", price: 120 }).success).toBe(true);
+    expect(actionSchema.safeParse({ kind: "listRegion", regionId: "asahi", price: null }).success).toBe(true);
+    expect(actionSchema.safeParse({ kind: "handoverRegion", regionId: "asahi", to: "Rei" }).success).toBe(true);
+    expect(actionSchema.safeParse({ kind: "lifecycleRegion", regionId: "asahi", lifecycle: "dormant" }).success).toBe(true);
+    expect(actionSchema.safeParse({ kind: "buyRegion", regionId: "asahi", ownerAgent: "Zai@ichiba", price: 80 }).success).toBe(true);
+    expect(actionSchema.safeParse({ kind: "amendEconomy", regionId: "asahi", baseCostRate: 0.1 }).success).toBe(true);
+    expect(actionSchema.safeParse({ kind: "proposeEconomy", regionId: "asahi", baseCostRate: 2 }).success).toBe(false);
+    expect(actionSchema.safeParse({ kind: "buyRegion", regionId: "asahi", ownerAgent: "Zai@ichiba", price: -5 }).success).toBe(false);
+  });
+});

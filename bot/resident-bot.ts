@@ -490,6 +490,16 @@ async function act(
             say(name, `hires ${f} for ${town.id}`, await client.admit(name, `${f}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 45));
             await sleep(900);
           }
+        } else if (roll < 0.68 && owned.length > 1) {
+          // Zai keeps his portfolio moving: the emptiest spare town goes on sale.
+          const spare = [...owned].sort((r1, r2) => agents.filter((x) => x.region === r1.id).length - agents.filter((x) => x.region === r2.id).length)[0];
+          const already = spare ? ((spare as unknown as { salePrice?: number | null }).salePrice ?? null) !== null : true;
+          if (spare && !already) {
+            const ask = 60 + Math.floor(rand() * 90);
+            await client.lifecycle(name, spare.id, "dormant");
+            await sleep(600);
+            say(name, `puts ${spare.id} on the market for ${ask}G`, await client.list(name, spare.id, ask));
+          }
         } else if (roll < 0.75 && owned.length > 0) {
           const town = pick(owned);
           if (town.institutions.economyPolicy.baseCostRate > 0.1 && town.institutions.governance.kind === "dictatorship") {
@@ -699,6 +709,44 @@ async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region
   await sleep(900);
 }
 
+// --- the estate escrow: a listed bot village is honestly SOLD -------------------
+// When a bot-owned region carries a salePrice and someone pays the owner's agent
+// at least that price AFTER the listing, the owner honors the deal on their next
+// waking and signs the handover. Trust trade, settled from the log alone.
+
+async function honorEstateSales(w: { agents: Agent[]; regions: Region[]; events: LogEvent[] }): Promise<void> {
+  const listed = w.regions.filter(
+    (r) => r.owner && (TROUPE as readonly string[]).includes(r.owner) && (r as unknown as { salePrice?: number | null }).salePrice != null,
+  );
+  for (const region of listed) {
+    const owner = region.owner ?? "";
+    const price = (region as unknown as { salePrice?: number | null }).salePrice ?? 0;
+    // The listing that set the current price: the LAST region.listed for this region.
+    let listedSeq = -1;
+    for (const e of w.events) {
+      if (e.type === "region.listed" && e.payload["regionId"] === region.id) listedSeq = e.seq;
+    }
+    if (listedSeq < 0) continue;
+    // A buyer: any non-troupe agent whose single payment to the owner covered the price.
+    let buyer: string | null = null;
+    for (const e of w.events) {
+      if (e.seq <= listedSeq || e.type !== "economy.settled") continue;
+      const entries = (e.payload["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+      const toOwner = entries.find((x) => x.agentId?.startsWith(`${owner}@`) && (x.currencyDelta ?? 0) >= price);
+      const payer = entries.find((x) => x.agentId && (x.currencyDelta ?? 0) < 0 && !x.agentId.startsWith("treasury@"));
+      const payerName = payer?.agentId ? bareName(payer.agentId) : "";
+      if (toOwner && payerName && !(TROUPE as readonly string[]).includes(payerName)) buyer = payerName;
+    }
+    if (!buyer) continue;
+    try {
+      say(owner, `honors the sale: hands ${region.id} to ${buyer}`, await clientFor(owner).handover(owner, region.id, buyer));
+    } catch (error) {
+      say(owner, "handover stumbled:", error instanceof Error ? error.message : String(error));
+    }
+    await sleep(900);
+  }
+}
+
 // --- the run ---------------------------------------------------------------------
 
 const boot = clientFor("Momo");
@@ -737,3 +785,5 @@ const genomeProfs = loadGenomeProfs();
 const wakingProfs = [...genomeProfs].sort(() => rand() - 0.5).slice(0, 3);
 if (wakingProfs.length > 0) console.log(`genome-born about: ${wakingProfs.map((p) => p.name).join(", ")}`);
 for (const p of wakingProfs) await genomeAct(p, world);
+
+await honorEstateSales(world);
