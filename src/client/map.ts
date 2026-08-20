@@ -36,6 +36,14 @@ export const enum Tile {
   Rock = 18,
   Flower = 19,
   Stall = 20,
+  RoofGreen = 21,
+  RoofBlue = 22,
+  RoofBrown = 23,
+  WallWood = 24,
+  DoorWood = 25,
+  Well = 26,
+  Farm = 27,
+  Lamp = 28,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -55,6 +63,14 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.CourtDoor,
   Tile.Rock,
   Tile.Stall,
+  Tile.RoofGreen,
+  Tile.RoofBlue,
+  Tile.RoofBrown,
+  Tile.WallWood,
+  Tile.DoorWood,
+  Tile.Well,
+  Tile.Farm,
+  Tile.Lamp,
 ]);
 
 /** Village slot origins (top-left), spaced for the largest possible plot (20x15). */
@@ -230,12 +246,19 @@ function carveVillage(
   }
   const houses = candidates.slice(0, Math.min(Math.max(residents, 1), candidates.length));
   const spots: (readonly [number, number])[] = [];
+  const ROOFS: readonly Tile[] = [Tile.HouseRoof, Tile.RoofGreen, Tile.RoofBlue, Tile.RoofBrown];
   for (const [hx, hy] of houses) {
-    for (let x = hx; x < hx + 3; x++) {
-      set(tiles, x, hy, Tile.HouseRoof);
-      set(tiles, x, hy + 1, Tile.HouseWall);
+    // Every house has its own build: roof color, plaster or timber, and width.
+    const roof = ROOFS[Math.floor(rng() * ROOFS.length)] ?? Tile.HouseRoof;
+    const wood = rng() < 0.4;
+    const wall = wood ? Tile.WallWood : Tile.HouseWall;
+    const door = wood ? Tile.DoorWood : Tile.HouseDoor;
+    const width = rng() < 0.3 && hx + 3 <= vx + w - 2 && !(gx >= hx && gx <= hx + 3) ? 4 : 3;
+    for (let x = hx; x < hx + width; x++) {
+      set(tiles, x, hy, roof);
+      set(tiles, x, hy + 1, wall);
     }
-    set(tiles, hx + 1, hy + 1, Tile.HouseDoor);
+    set(tiles, hx + 1, hy + 1, door);
     spots.push([hx + 1, hy + 2] as const);
   }
 
@@ -254,8 +277,10 @@ function carveVillage(
   }
   set(tiles, stall[0], stall[1], Tile.Stall);
 
-  // Village character: rocks, a pond or two, flowers — counts and places per-region.
+  // Village character: a well, lamps, farm plots, rocks, ponds, flowers — all per-region.
   const decor: [Tile, number][] = [
+    [Tile.Well, rng() < 0.75 ? 1 : 0],
+    [Tile.Lamp, 1 + Math.floor(rng() * 2)],
     [Tile.Rock, Math.floor(rng() * 4)],
     [Tile.Water, Math.floor(rng() * 3)],
     [Tile.Flower, 1 + Math.floor(rng() * 5)],
@@ -274,6 +299,25 @@ function carveVillage(
           break;
         }
       }
+    }
+  }
+
+  // Farm plots: little tilled clusters (up to 2x2 each), where the land is free.
+  const farms = Math.floor(rng() * 3);
+  for (let i = 0; i < farms; i++) {
+    for (let tries = 0; tries < 12; tries++) {
+      const fx = vx + 2 + Math.floor(rng() * (w - 5));
+      const fy = vy + 4 + Math.floor(rng() * (h - 7));
+      if (!isFree(fx, fy)) continue;
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+        const px = fx + dx;
+        const py = fy + dy;
+        const nearDoor = [hall, mint, court, ...houses.map(([hx2, hy2]) => [hx2 + 1, hy2 + 1] as const)].some(
+          ([qx, qy]) => px === qx && py === qy + 1,
+        );
+        if (isFree(px, py) && !nearDoor) set(tiles, px, py, Tile.Farm);
+      }
+      break;
     }
   }
 

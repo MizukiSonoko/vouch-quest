@@ -206,6 +206,70 @@ const FLOWER = [
   "gggggggggggggggg",
 ];
 
+const WELL = [
+  "gggggggggggggggg",
+  "ggggxbbbbbbxgggg",
+  "gggxbggggggbxggg",
+  "ggxbbbbbbbbbbxgg",
+  "ggxmmmmmmmmmmxgg",
+  "ggxmeewwwweemxgg",
+  "ggxmewwwwwwemxgg",
+  "ggxmewwWwwwemxgg",
+  "ggxmewwwwwwemxgg",
+  "ggxmeewwwweemxgg",
+  "ggxmmmmmmmmmmxgg",
+  "ggxxxxxxxxxxxxgg",
+  "gggGgggggdgggggg",
+  "gggggggggggggggg",
+  "ggdggggGgggggggg",
+  "gggggggggggggggg",
+];
+
+const FARM = [
+  "bbbbbbbbbbbbbbbb",
+  "bSbbSbbSbbSbbSbb",
+  "bbbbbbbbbbbbbbbb",
+  "bTbbTbbTbbTbbTbb",
+  "bbbbbbbbbbbbbbbb",
+  "bSbbSbbSbbSbbSbb",
+  "bbbbbbbbbbbbbbbb",
+  "bTbbTbbTbbTbbTbb",
+  "bbbbbbbbbbbbbbbb",
+  "bSbbSbbSbbSbbSbb",
+  "bbbbbbbbbbbbbbbb",
+  "bTbbTbbTbbTbbTbb",
+  "bbbbbbbbbbbbbbbb",
+  "bSbbSbbSbbSbbSbb",
+  "bbbbbbbbbbbbbbbb",
+  "bbbbbbbbbbbbbbbb",
+];
+
+const LAMP = [
+  "gggggggggggggggg",
+  "ggggggxyyxgggggg",
+  "gggggxyyyyxggggg",
+  "gggggxyyyyxggggg",
+  "ggggggxyyxgggggg",
+  "gggggggxxggggggg",
+  "gggggggbbggggggg",
+  "gggggggbbggggggg",
+  "gggggggbbggggggg",
+  "gggggggbbggggggg",
+  "gggggggbbggggggg",
+  "ggggggbbbbgggggg",
+  "gggggxbbbbxggggg",
+  "gggGgggggggdgggg",
+  "gggggggggggggggg",
+  "gggggggggggggggg",
+];
+
+/** A wooden wall/door pair for the cabin-style houses. */
+const WALL_WOOD = WALL.map((row) => row.replaceAll("h", "F").replaceAll("H", "b"));
+const DOOR_WOOD = WALL_WOOD.map((row, y) => {
+  if (y < 4) return row;
+  return `${row.slice(0, 4)}xkkkkkkkx${row.slice(13)}`.slice(0, 16);
+});
+
 /** Roof recolor for civic buildings: swap the shingle colors. */
 const roofIn = (dark: string, light: string): string[] => ROOF.map((row) => row.replaceAll("r", dark).replaceAll("R", light));
 
@@ -344,6 +408,14 @@ export function buildSprites(): SpriteSet {
     [Tile.Rock, draw(ROCK)],
     [Tile.Flower, draw(FLOWER)],
     [Tile.Stall, draw(STALL)],
+    [Tile.RoofGreen, draw(roofIn("a", "T"))],
+    [Tile.RoofBlue, draw(roofIn("w", "W"))],
+    [Tile.RoofBrown, draw(roofIn("b", "F"))],
+    [Tile.WallWood, draw(WALL_WOOD)],
+    [Tile.DoorWood, draw(DOOR_WOOD)],
+    [Tile.Well, draw(WELL)],
+    [Tile.Farm, draw(FARM)],
+    [Tile.Lamp, draw(LAMP)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();

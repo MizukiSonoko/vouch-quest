@@ -33,6 +33,10 @@ interface Mob {
   timer: number;
   frame: number;
   home: Village | undefined;
+  /** Where this villager is headed on an errand, if anywhere. */
+  target: readonly [number, number] | null;
+  /** A speech bubble while chatting with a neighbor. */
+  bubble: { text: string; until: number } | null;
 }
 
 interface Player {
@@ -86,6 +90,8 @@ async function refreshWorld(repositionHero: boolean): Promise<void> {
     timer: 500 + Math.random() * 2000,
     frame: 0,
     home: map?.villages.find((v) => v.regionId === p.agent.region),
+    target: null,
+    bubble: null,
   }));
   if (repositionHero || isSolid(map, player.x, player.y)) {
     const [sx, sy] = heroSpawn(snap, map);
@@ -711,7 +717,8 @@ function update(dt: number): void {
   const tx = player.x * CELL;
   const ty = player.y * CELL;
   if (player.px !== tx || player.py !== ty) {
-    const step = SPEED * (dt / 16.7);
+    // Hold Shift to dash, DQ-B-button style.
+    const step = (held.has("Shift") ? SPEED * 1.9 : SPEED) * (dt / 16.7);
     player.px += Math.sign(tx - player.px) * Math.min(step, Math.abs(tx - player.px));
     player.py += Math.sign(ty - player.py) * Math.min(step, Math.abs(ty - player.py));
     player.frame = Math.floor(performance.now() / 160) % 2;
@@ -725,7 +732,7 @@ function update(dt: number): void {
     }
   }
 
-  // NPCs: wander within their village fence.
+  // NPCs: run errands around their village, and stop for a chat when they meet.
   for (const mob of mobs) {
     const mx = mob.x * CELL;
     const my = mob.y * CELL;
@@ -736,25 +743,80 @@ function update(dt: number): void {
       mob.frame = Math.floor(performance.now() / 200) % 2;
       continue;
     }
+    if (mob.bubble && performance.now() > mob.bubble.until) mob.bubble = null;
     mob.timer -= dt;
     if (mob.timer > 0) continue;
-    mob.timer = 800 + Math.random() * 2200;
-    const dirs = [
-      [0, 1],
-      [0, -1],
-      [1, 0],
-      [-1, 0],
-    ] as const;
-    const [dx, dy] = dirs[Math.floor(Math.random() * dirs.length)] ?? [0, 0];
+
+    // A neighbor within arm's reach? Stop and gossip (both of them).
+    const neighbor = mobs.find((o) => o !== mob && Math.abs(o.x - mob.x) + Math.abs(o.y - mob.y) === 1 && !o.bubble);
+    if (!mob.bubble && neighbor && Math.random() < 0.6) {
+      const now = performance.now();
+      mob.bubble = { text: chatterLine(mob), until: now + 2600 };
+      neighbor.bubble = { text: replyLine(neighbor), until: now + 3200 };
+      mob.timer = 3000 + Math.random() * 1500;
+      neighbor.timer = Math.max(neighbor.timer, 3400);
+      mob.target = null;
+      neighbor.target = null;
+      continue;
+    }
+
+    const home = mob.home;
+    // Pick an errand now and then: the stall, the signboard, a house front, a neighbor.
+    if (!mob.target && home && Math.random() < 0.45) {
+      const pois: (readonly [number, number])[] = [
+        [home.stall[0], home.stall[1] + 1],
+        [home.sign[0], home.sign[1] - 1],
+        ...home.spots,
+        ...mobs.filter((o) => o !== mob && o.home === home).map((o) => [o.x, o.y] as const),
+      ];
+      mob.target = pois[Math.floor(Math.random() * pois.length)] ?? null;
+    }
+
+    let dx = 0;
+    let dy = 0;
+    if (mob.target) {
+      const [gx2, gy2] = mob.target;
+      if (mob.x === gx2 && mob.y === gy2) mob.target = null;
+      else if (Math.abs(gx2 - mob.x) >= Math.abs(gy2 - mob.y)) dx = Math.sign(gx2 - mob.x);
+      else dy = Math.sign(gy2 - mob.y);
+      if (Math.random() < 0.08) mob.target = null; // sometimes they forget the errand
+    }
+    if (dx === 0 && dy === 0) {
+      const dirs = [
+        [0, 1],
+        [0, -1],
+        [1, 0],
+        [-1, 0],
+      ] as const;
+      [dx, dy] = dirs[Math.floor(Math.random() * dirs.length)] ?? [0, 0];
+    }
+    mob.timer = mob.target ? 420 + Math.random() * 400 : 800 + Math.random() * 1800;
     const nx = mob.x + dx;
     const ny = mob.y + dy;
-    const home = mob.home;
     const inside = !home || (nx > home.x && nx < home.x + home.w - 1 && ny > home.y && ny < home.y + home.h - 1);
     if (inside && walkable(nx, ny) && !(nx === player.x && ny === player.y)) {
       mob.x = nx;
       mob.y = ny;
+    } else if (mob.target) {
+      mob.target = null; // blocked: give up rather than shove
     }
   }
+}
+
+// Ambient one-liners: flavored by the villager's real ledger where it shows.
+function chatterLine(mob: Mob): string {
+  const gold = mob.agent.balances.currency;
+  if (gold < 10) return "はらへった…";
+  if (gold >= 150) return "わっはっは!";
+  if (mob.agent.trust >= 5) return "しんらいが いちばん";
+  const pool = ["やあ!", "きいたかい?", "もうかった?", "いいてんきだ", "せいが でるね"];
+  return pool[Math.floor(Math.random() * pool.length)] ?? "やあ!";
+}
+
+function replyLine(mob: Mob): string {
+  if (mob.agent.balances.currency < 10) return "ごちそうしてくれ…";
+  const pool = ["うんうん", "なるほどね", "はっはっは", "ぼちぼちさ", "そうかい?"];
+  return pool[Math.floor(Math.random() * pool.length)] ?? "うんうん";
 }
 
 function render(): void {
@@ -810,6 +872,19 @@ function render(): void {
     const pair = sprites.roles[mob.agent.role] ?? sprites.roles["artisan"];
     if (pair) ctx.drawImage(pair[mob.frame === 0 ? 0 : 1], mob.px - camX, mob.py - camY);
   }
+  ctx.font = '13px "DotGothic16", monospace';
+  for (const mob of mobs) {
+    if (!mob.bubble) continue;
+    const bw = Math.max(ctx.measureText(mob.bubble.text).width + 14, 34);
+    const bx = mob.px - camX + CELL / 2 - bw / 2;
+    const by = mob.py - camY - 26;
+    ctx.fillStyle = "#f8f8f8";
+    ctx.fillRect(bx, by, bw, 20);
+    ctx.fillRect(mob.px - camX + CELL / 2 - 3, by + 20, 6, 5);
+    ctx.fillStyle = "#111";
+    ctx.fillText(mob.bubble.text, bx + 7, by + 14);
+  }
+
   const heroPair = sprites.heroFor(titleTier(title));
   ctx.drawImage(heroPair[player.frame === 0 ? 0 : 1], player.px - camX, player.py - camY);
 
@@ -870,7 +945,7 @@ async function poll(): Promise<void> {
 }
 
 // Debug handle (harmless in prod; lets tooling inspect position/keys).
-Object.defineProperty(window, "__vq", { value: { player, held, tile: (x: number, y: number) => (map ? tileAt(map, x, y) : -1), solid: (x: number, y: number) => (map ? isSolid(map, x, y) : true) }, configurable: true });
+Object.defineProperty(window, "__vq", { value: { player, held, mobs: () => mobs.map((m) => [m.agent.id, m.x, m.y, Math.round(m.timer), m.target]), tile: (x: number, y: number) => (map ? tileAt(map, x, y) : -1), solid: (x: number, y: number) => (map ? isSolid(map, x, y) : true) }, configurable: true });
 
 let last = performance.now();
 function frame(now: number): void {
