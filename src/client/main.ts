@@ -251,7 +251,7 @@ async function refreshWorld(repositionHero: boolean): Promise<void> {
 
   // Wild critters, seeded per biome out in the open country.
   critters = [];
-  for (let tries = 0; critters.length < 24 && tries < 400; tries++) {
+  for (let tries = 0; critters.length < 54 && tries < 900; tries++) {
     const cx = 4 + Math.floor(Math.random() * (MAP_W - 8));
     const cy = 4 + Math.floor(Math.random() * (MAP_H - 8));
     if (isSolid(map, cx, cy) || map.villages.some((v) => villageContains(v, cx, cy))) continue;
@@ -1311,8 +1311,13 @@ const MINI_COLORS: Record<number, string> = {
   [Tile.Airport]: "#b8c8d8",
   [Tile.Plant]: "#8890a0",
   [Tile.Substation]: "#c8b830",
+  [Tile.TowerWall]: "#7a8598",
+  [Tile.TowerGlass]: "#8fc0e8",
+  [Tile.TowerTop]: "#aab4c0",
+  [Tile.RailElevated]: "#8a7a60",
+  [Tile.RoadElevated]: "#9a9aa2",
 };
-const MINI_SCALE = 3;
+const MINI_SCALE = 2;
 let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;
 
 function miniMapCanvas(m: WorldMap): HTMLCanvasElement {
@@ -1699,7 +1704,7 @@ function render(): void {
       const t = tileAt(map, x, y);
       const sprite = sprites.tiles.get(t);
       if (sprite) ctx.drawImage(sprite, x * CELL - camX, y * CELL - camY);
-      if (t === Tile.Lamp || t === Tile.WallWindow || t === Tile.WallWoodWindow) lights.push([x, y] as const);
+      if (t === Tile.Lamp || t === Tile.WallWindow || t === Tile.WallWoodWindow || t === Tile.TowerGlass) lights.push([x, y] as const);
     }
   }
 

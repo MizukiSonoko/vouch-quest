@@ -8,8 +8,8 @@ import type { AgentView, Snapshot } from "../shared";
 import { AFTERLIFE } from "./life";
 import { friendlyPairs } from "./shop";
 
-export const MAP_W = 240;
-export const MAP_H = 160;
+export const MAP_W = 360;
+export const MAP_H = 240;
 export const MIN_PLOT_W = 14;
 export const MAX_PLOT_W = 34;
 export const MIN_PLOT_H = 11;
@@ -62,6 +62,11 @@ export const enum Tile {
   Airport = 43,
   Plant = 44,
   Substation = 45,
+  TowerWall = 46,
+  TowerGlass = 47,
+  TowerTop = 48,
+  RailElevated = 49,
+  RoadElevated = 50,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -102,13 +107,16 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.Airport,
   Tile.Plant,
   Tile.Substation,
+  Tile.TowerWall,
+  Tile.TowerGlass,
+  Tile.TowerTop,
 ]);
 
-/** Village slot origins (top-left), a 5x6 lattice spaced for the largest plot (20x15). */
-export const SLOTS: readonly (readonly [number, number])[] = Array.from({ length: 30 }, (_, i) => {
-  const col = i % 5;
-  const row = Math.floor(i / 5);
-  return [10 + col * 44, 8 + row * 25] as const;
+/** Village slot origins (top-left), an 8x7 lattice spaced for the largest plot (34x34). */
+export const SLOTS: readonly (readonly [number, number])[] = Array.from({ length: 56 }, (_, i) => {
+  const col = i % 8;
+  const row = Math.floor(i / 8);
+  return [10 + col * 43, 6 + row * 32] as const;
 });
 
 export interface Village {
@@ -514,6 +522,24 @@ function carveVillage(
       break;
     }
   }
+  // だいとし raise true skyscrapers — glass towers piercing the skyline. They
+  // go up AFTER the houses: redevelopment builds on top of the old quarter.
+  if (tier >= 3) {
+    const towerCount = 2 + Math.floor(rng() * 2);
+    for (let i = 0; i < towerCount; i++) {
+      const bw = 2 + Math.floor(rng() * 2);
+      const wallRows = 5 + Math.floor(rng() * 3);
+      for (let tries = 0; tries < 30; tries++) {
+        const bx = vx + 1 + Math.floor(rng() * Math.max(1, w - 1 - bw));
+        const by = vy + 1 + Math.floor(rng() * Math.max(1, h - wallRows - 4));
+        if (overlapsProtected(bx, by, bw, wallRows + 1)) continue;
+        const built = drawBuilding(bx, by, bw, 1, wallRows, { roof: Tile.TowerTop, wall: Tile.TowerWall, door: Tile.HouseDoor, window: Tile.TowerGlass });
+        houseDoors.push({ door: built.door, tile: Tile.HouseDoor });
+        break;
+      }
+    }
+  }
+
   // Keep only doors that survived later construction, and clear each doorstep.
   const spots: (readonly [number, number])[] = [];
   const homes: (readonly [number, number])[] = [];
@@ -756,6 +782,7 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     if (path.length > 3) roads.push(path);
   }
 
+  const inAnyPlot2 = (x: number, y: number): boolean => villages.some((v) => villageContains(v, x, y));
   // Highways: friendly pairs where BOTH sides are cities get a two-lane artery.
   const highways: (readonly [number, number])[][] = [];
   for (const [aId, bId] of friendlyPairs(snapshot.regions)) {
@@ -767,7 +794,8 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     const paveWide = (x: number, y: number): void => {
       for (const yy of [y, y + 1]) {
         if (x < 2 || yy < 2 || x >= MAP_W - 2 || yy >= MAP_H - 2 || inAnyPlot2(x, yy)) continue;
-        set(tiles, x, yy, Tile.Pavement);
+        const under = tiles[yy * MAP_W + x] ?? Tile.Grass;
+        set(tiles, x, yy, under === Tile.Water ? Tile.RoadElevated : Tile.Pavement);
       }
     };
     for (let y = a.gate[1] + 1; y <= laneY; y++) {
@@ -789,7 +817,6 @@ export function buildMap(snapshot: Snapshot): WorldMap {
   // Rails: the stations form a line — technology stitches the cities together.
   const rails: (readonly [number, number])[][] = [];
   const stations = villages.filter((v) => v.station).sort((a, b) => a.x - b.x || a.y - b.y);
-  const inAnyPlot2 = (x: number, y: number): boolean => villages.some((v) => villageContains(v, x, y));
   for (let i = 0; i + 1 < stations.length; i++) {
     const a = stations[i]?.station;
     const b = stations[i + 1]?.station;
@@ -813,6 +840,28 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     }
     path.push(b);
     rails.push(path);
+  }
+
+  // 高架鉄道: metropolises get a direct elevated express — it strides straight
+  // across water and countryside on concrete pillars, cutting corners diagonally.
+  const metros = villages.filter((v) => v.tier >= 3 && v.station).sort((a, b) => a.x - b.x || a.y - b.y);
+  for (let i = 0; i + 1 < metros.length; i++) {
+    const a = metros[i]?.station;
+    const b = metros[i + 1]?.station;
+    if (!a || !b) continue;
+    const path: (readonly [number, number])[] = [];
+    let ex = a[0];
+    let ey = a[1];
+    let guard = 0;
+    while ((ex !== b[0] || ey !== b[1]) && guard++ < MAP_W + MAP_H) {
+      if (ex !== b[0]) ex += Math.sign(b[0] - ex);
+      if (ey !== b[1]) ey += Math.sign(b[1] - ey);
+      path.push([ex, ey] as const);
+      if (ex < 2 || ey < 2 || ex >= MAP_W - 2 || ey >= MAP_H - 2 || inAnyPlot2(ex, ey)) continue;
+      const t = tiles[ey * MAP_W + ex] ?? Tile.Grass;
+      if (t !== Tile.Station && t !== Tile.Rail) set(tiles, ex, ey, Tile.RailElevated);
+    }
+    if (path.length > 3) rails.push(path);
   }
 
   // The grid: each substation connects to the nearest plant within range.

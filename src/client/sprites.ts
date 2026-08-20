@@ -272,6 +272,101 @@ const BUILDING_ROOF = [
   "mmmmmmmmmmmmmmmm",
 ];
 
+const TOWER_WALL = [
+  "xmmmmmmmmmmmmmmx",
+  "xmNNmmNNmmNNmmmx",
+  "xmNNmmNNmmNNmmmx",
+  "xmmmmmmmmmmmmmmx",
+  "xmnnmmNNmmnnmmmx",
+  "xmnnmmNNmmnnmmmx",
+  "xmmmmmmmmmmmmmmx",
+  "xmNNmmnnmmNNmmmx",
+  "xmNNmmnnmmNNmmmx",
+  "xmmmmmmmmmmmmmmx",
+  "xmnnmmNNmmNNmmmx",
+  "xmnnmmNNmmNNmmmx",
+  "xmmmmmmmmmmmmmmx",
+  "xmNNmmNNmmnnmmmx",
+  "xmNNmmNNmmnnmmmx",
+  "xmmmmmmmmmmmmmmx",
+];
+
+const TOWER_GLASS = [
+  "xNNNNnNNNNnNNNNx",
+  "xNNNNnNNNNnNNNNx",
+  "xnnnnnnnnnnnnnnx",
+  "xNNyNnNNNNnNNNNx",
+  "xNNyNnNNNNnNNNNx",
+  "xnnnnnnnnnnnnnnx",
+  "xNNNNnNNyNnNNNNx",
+  "xNNNNnNNyNnNNNNx",
+  "xnnnnnnnnnnnnnnx",
+  "xNNNNnNNNNnNyNNx",
+  "xNNNNnNNNNnNyNNx",
+  "xnnnnnnnnnnnnnnx",
+  "xNNNNnNNNNnNNNNx",
+  "xNNNNnNNNNnNNNNx",
+  "xnnnnnnnnnnnnnnx",
+  "xxxxxxxxxxxxxxxx",
+];
+
+const TOWER_TOP = [
+  "xxxxxxxxxxxxxxxx",
+  "xmmmmmmryrmmmmmx",
+  "xmmmmmmmxmmmmmmx",
+  "xmmmmmmmxmmmmmmx",
+  "xmmmeeeeeeeemmmx",
+  "xmmmeexxxxeemmmx",
+  "xmmmeexHHxeemmmx",
+  "xmmmeexHHxeemmmx",
+  "xmmmeexxxxeemmmx",
+  "xmmmeeeeeeeemmmx",
+  "xmmmmmmmmmmmmmmx",
+  "xmmmmmmmmmmmmmmx",
+  "xxxxxxxxxxxxxxxx",
+  "xmNNmmNNmmNNmmmx",
+  "xmNNmmNNmmNNmmmx",
+  "xmmmmmmmmmmmmmmx",
+];
+
+const RAIL_ELEV = [
+  "xxxxxxxxxxxxxxxx",
+  "mmmmmmmmmmmmmmmm",
+  "bbbbbbbbbbbbbbbb",
+  "xxxxxxxxxxxxxxxx",
+  "mmmmmmmmmmmmmmmm",
+  "xxxxxxxxxxxxxxxx",
+  "bbbbbbbbbbbbbbbb",
+  "mmmmmmmmmmmmmmmm",
+  "HHHHHHHHHHHHHHHH",
+  "xxxxxxxxxxxxxxxx",
+  "ddmmddddddddmmdd",
+  "ddmmddddddddmmdd",
+  "ddmmddddddddmmdd",
+  "ddmmddddddddmmdd",
+  "ddxxddddddddxxdd",
+  "dddddddddddddddd",
+];
+
+const ROAD_ELEV = [
+  "HHHHHHHHHHHHHHHH",
+  "xxxxxxxxxxxxxxxx",
+  "mmmmmmmmmmmmmmmm",
+  "mmmmmmmmmmmmmmmm",
+  "mmmyymmmmmmyymmm",
+  "mmmmmmmmmmmmmmmm",
+  "mmmmmmmmmmmmmmmm",
+  "xxxxxxxxxxxxxxxx",
+  "HHHHHHHHHHHHHHHH",
+  "wwmmwwwwwwwwmmww",
+  "wwmmwwwwwwwwmmww",
+  "wwmmwwwwwwwwmmww",
+  "wwmmwwwwwwwwmmww",
+  "wwxxwwwwwwwwxxww",
+  "wwwwwwwwwwwwwwww",
+  "wWwwWwwwWwwwWwww",
+];
+
 const STATION = [
   "xxxxxxxxxxxxxxxx",
   "xrrrrrrrrrrrrrrx",
@@ -732,6 +827,11 @@ export function buildSprites(): SpriteSet {
     [Tile.Airport, draw(AIRPORT)],
     [Tile.Plant, draw(PLANT)],
     [Tile.Substation, draw(SUBSTATION)],
+    [Tile.TowerWall, draw(TOWER_WALL)],
+    [Tile.TowerGlass, draw(TOWER_GLASS)],
+    [Tile.TowerTop, draw(TOWER_TOP)],
+    [Tile.RailElevated, draw(RAIL_ELEV)],
+    [Tile.RoadElevated, draw(ROAD_ELEV)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();
