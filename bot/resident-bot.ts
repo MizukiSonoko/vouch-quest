@@ -18,6 +18,7 @@
 // Env: BOT_SEED (required, base secret), VOUCH_NODE_URL (default loopback).
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { keyPairFromSeed } from "vouch-core";
 import { VouchClient } from "./src/client";
 
@@ -62,12 +63,13 @@ const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)] as T
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const say = (who: string, msg: string, res?: unknown) => console.log(`[${who}] ${msg}${res !== undefined ? ` ${JSON.stringify(res)}` : ""}`);
 
-type Name = "Momo" | "Kaji" | "Gin" | "Sora" | "Toshi" | "Zai" | "Ginko" | "Kuro" | "Yoru" | "Hikari" | "Hakobu" | "Hoken" | "Geinin";
-const TROUPE: readonly Name[] = ["Momo", "Kaji", "Gin", "Sora", "Toshi", "Zai", "Ginko", "Kuro", "Yoru", "Hikari", "Hakobu", "Hoken", "Geinin"];
+type Name = "Momo" | "Kaji" | "Gin" | "Sora" | "Toshi" | "Zai" | "Ginko" | "Kuro" | "Yoru" | "Hikari" | "Hakobu" | "Hoken" | "Geinin" | "Panya" | "Souryo" | "Ryoshi";
+const TROUPE: readonly Name[] = ["Momo", "Kaji", "Gin", "Sora", "Toshi", "Zai", "Ginko", "Kuro", "Yoru", "Hikari", "Hakobu", "Hoken", "Geinin", "Panya", "Souryo", "Ryoshi"];
 const ROLES: Record<Name, "artisan" | "merchant" | "broker"> = {
   Momo: "merchant", Kaji: "artisan", Gin: "broker", Sora: "merchant",
   Toshi: "broker", Zai: "merchant", Ginko: "broker", Kuro: "merchant",
   Yoru: "merchant", Hikari: "broker", Hakobu: "merchant", Hoken: "broker", Geinin: "artisan",
+  Panya: "artisan", Souryo: "broker", Ryoshi: "artisan",
 };
 const SETTLERS = ["Hana", "Taro", "Suzu", "Gonta", "Mimi", "Roku", "Chiyo", "Bunta", "Kiku", "Nobu", "Ume", "Sen", "Rin", "Kota", "Yuki", "Asa", "Fuku", "Tetsu", "Nana", "Goro", "Ine", "Matsu", "Take", "Tsuru", "Kame", "Botan", "Kaede", "Sumire", "Ran", "Fuji", "Hagi", "Kiri"];
 const WARES = ["bread", "fish", "lantern", "rope", "boots", "tea", "brick", "gear"];
@@ -324,6 +326,49 @@ async function act(
     return;
   }
 
+  // パン屋: Panya bakes and hands warm bread to children and the hungry.
+  if (name === "Panya") {
+    const myBread = world.items.filter((it) => it.owner === me.id && it.kind === "bread");
+    const hungry = neighbors.filter((n2) => CHILD_NAMES.includes(bareName(n2.id)) || n2.balances.currency < 8);
+    if (myBread.length > 0 && hungry.length > 0) {
+      const loaf = myBread[0];
+      const to = pick(hungry);
+      if (loaf) say(name, `hands warm bread to ${to.id}`, await client.transferItem(me.id, loaf.id, to.id));
+      await sleep(900);
+    }
+    say(name, "bakes", await client.mintItem(me.id, `bread${Math.random().toString(36).slice(2, 7)}`, "bread", me.id));
+    return;
+  }
+
+  // 神主: Souryo blesses the newly wed and comforts the town.
+  if (name === "Souryo") {
+    const wed = neighbors.filter((n2) => isMarried(edges, n2.id, neighbors));
+    if (wed.length > 0) {
+      const blessed = pick(wed);
+      say(name, `blesses the marriage of ${blessed.id}`, await client.vouch(me.id, blessed.id, 2));
+    } else if (neighbors.length > 0) {
+      say(name, "offers a kind word", await client.vouch(me.id, pick(neighbors).id, 1));
+    }
+    if (rand() < 0.3) {
+      const target = active.filter((r) => r.id !== me.region && r.id !== AFTERLIFE);
+      const t2 = target[Math.floor(rand() * target.length)];
+      if (t2) say(name, `makes a pilgrimage to ${t2.id}`, await client.migrate(me.id, t2.id));
+    }
+    return;
+  }
+
+  // 漁師: Ryoshi hauls in the day's catch and shares it around.
+  if (name === "Ryoshi") {
+    const catchOfDay = world.items.filter((it) => it.owner === me.id && (it.kind === "fish" || it.kind === "sakana"));
+    if (catchOfDay.length > 1 && neighbors.length > 0) {
+      const gift = catchOfDay[0];
+      if (gift) say(name, `shares the catch with ${pick(neighbors).id}`, await client.transferItem(me.id, gift.id, pick(neighbors).id));
+      await sleep(900);
+    }
+    say(name, "casts the net", await client.mintItem(me.id, `sakana${Math.random().toString(36).slice(2, 7)}`, "sakana", me.id));
+    return;
+  }
+
   // 旅芸人: Geinin tours the towns; delighted locals tip a coin.
   if (name === "Geinin") {
     if (rand() < 0.5) {
@@ -569,6 +614,73 @@ async function villagerAct(
   await sleep(900);
 }
 
+// --- genome-born residents: professions the evolution daemon dreamed up ---------
+// The LLM writes DATA (name/role/craft) into ~/vouch-data/genome.json; this loop
+// turns each entry into a real, key-holding resident. Validation is strict —
+// anything malformed simply never comes to life.
+
+interface GenomeProf {
+  name: string;
+  role: "artisan" | "merchant" | "broker";
+  craft: string;
+}
+
+function loadGenomeProfs(): GenomeProf[] {
+  try {
+    const path = process.env["GENOME_PATH"] ?? `${process.env["HOME"]}/vouch-data/genome.json`;
+    const raw = JSON.parse(readFileSync(path, "utf8")) as { professions?: unknown };
+    const out: GenomeProf[] = [];
+    for (const entry of Array.isArray(raw.professions) ? raw.professions : []) {
+      const o = entry as Record<string, unknown>;
+      const name = o["name"];
+      const role = o["role"];
+      const craft = o["craft"];
+      if (
+        typeof name === "string" && /^[A-Za-z][A-Za-z0-9]{1,23}$/.test(name) &&
+        (role === "artisan" || role === "merchant" || role === "broker") &&
+        typeof craft === "string" && /^[a-z][a-z0-9]{1,23}$/.test(craft) &&
+        !(TROUPE as readonly string[]).includes(name)
+      ) {
+        out.push({ name, role, craft });
+      }
+    }
+    return out.slice(0, 24);
+  } catch {
+    return [];
+  }
+}
+
+async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region[] }): Promise<void> {
+  const client = clientFor(prof.name);
+  try {
+    await ensureRegistered(client, prof.name);
+    const me = w.agents.find((a) => a.id.startsWith(`${prof.name}@`) && a.region !== AFTERLIFE);
+    if (!me) {
+      const botOwned = w.regions.filter((r) => r.owner && (TROUPE as readonly string[]).includes(r.owner) && r.lifecycle === "active");
+      const home = botOwned.length > 0 ? pick(botOwned) : null;
+      if (home?.owner) {
+        say(home.owner, `hires genome-born ${prof.name} into ${home.id}`, await clientFor(home.owner).admit(home.owner, `${prof.name}@${home.id}`, home.id, prof.role, 70));
+      }
+      return;
+    }
+    const region = w.regions.find((r) => r.id === me.region);
+    const neighbors = w.agents.filter((a) => a.region === me.region && a.id !== me.id && a.role !== "treasury");
+    const roll = rand();
+    if (roll < 0.4 && region?.institutions.itemPolicy.minting === "anyone") {
+      say(me.id, `crafts ${prof.craft}`, await client.mintItem(me.id, `${prof.craft}${Math.random().toString(36).slice(2, 7)}`, prof.craft, me.id));
+    } else if (roll < 0.7 && neighbors.length > 0 && me.balances.currency > 6) {
+      const to = pick(neighbors);
+      say(me.id, `trades with ${to.id}`, await client.transfer(me.id, to.id, 2 + Math.floor(rand() * 5)));
+    } else if (neighbors.length > 0) {
+      const to = pick(neighbors);
+      say(me.id, `vouches ${to.id}`, await client.vouch(me.id, to.id, 1));
+    }
+  } catch (error) {
+    say(prof.name, "stumbled:", error instanceof Error ? error.message : String(error));
+  }
+  await sleep(900);
+}
+
 // --- the run ---------------------------------------------------------------------
 
 const boot = clientFor("Momo");
@@ -602,3 +714,8 @@ const villagers = worldAgents.filter((a) => a.role !== "treasury" && a.region !=
 const wakingFolk = villagers.sort(() => rand() - 0.5).slice(0, 10 + Math.floor(rand() * 5));
 console.log(`villagers about: ${wakingFolk.map((a) => a.id).join(", ") || "(none yet)"}`);
 for (const v of wakingFolk) await villagerAct(v, world);
+
+const genomeProfs = loadGenomeProfs();
+const wakingProfs = [...genomeProfs].sort(() => rand() - 0.5).slice(0, 3);
+if (wakingProfs.length > 0) console.log(`genome-born about: ${wakingProfs.map((p) => p.name).join(", ")}`);
+for (const p of wakingProfs) await genomeAct(p, world);

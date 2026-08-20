@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "vocab": {
+    "wagashi": "わがし",
+    "yuzen": "ゆうぜんぞめ",
+    "karakuri": "からくりにんぎょう"
+  },
+  "chatter": {
+    "generic": ["きょうも せかいは まわっている。", "かわらばん、もう よんだかい?"],
+    "market": ["いちばの あさは はやいよ。", "しなものは しんかする、ひとも しんかする。"],
+    "child": ["ことばが ふえたんだって!"],
+    "elder": ["ことばも まちも、そだつものじゃよ。"]
+  },
+  "wares": [
+    { "kind": "wagashi", "name": "わがし", "price": 14, "blurb": "ちゃにあう あまいひとくち。" }
+  ],
+  "professions": [
+    { "name": "Wagashiya", "role": "artisan", "craft": "wagashi", "greeting": "あまいものは こころのくすり。" }
+  ],
+  "headlines": ["ことばの たねが まかれた — せかいは これから しんかする"]
+}

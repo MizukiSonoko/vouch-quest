@@ -4,10 +4,19 @@
     {
       "src": "package.json",
       "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
+      "config": {
+        "distDir": "dist"
+      }
     }
   ],
   "rewrites": [
-    { "source": "/node/:path*", "destination": "http://80.78.31.3:8787/:path*" }
+    {
+      "source": "/node/:path*",
+      "destination": "http://80.78.31.3:8787/:path*"
+    },
+    {
+      "source": "/genome",
+      "destination": "http://80.78.31.3:8788/genome.json"
+    }
   ]
 }

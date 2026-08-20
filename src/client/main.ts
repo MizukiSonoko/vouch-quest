@@ -6,14 +6,15 @@
 
 import type { AgentView, ItemView, LogEventView, Snapshot } from "../shared";
 import { dayPhase, ParticleField, SkyShow, Weather, Wildlife } from "./ambience";
-import { npcLines } from "./dialogue";
+import { npcLines, registerChatter } from "./dialogue";
 import { AFTERLIFE, BYOKI, foldLife, isChildName, isDead, WeddingBook } from "./life";
 import { eventToMessage } from "./feed";
 import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, villageContains, type WorldMap } from "./map";
+import { loadGenome } from "./genome";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
-import { classifyRegime, type GovernanceValue, lawText, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
+import { classifyRegime, type GovernanceValue, lawLayer, lawText, municipalRank, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
 import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
-import { canShopHere, CATALOG, friendlyPairs, kindName, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
+import { allWares, canShopHere, CATALOG, friendlyPairs, kindName, prefectures, registerKindNames, registerWares, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
 import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
 import { buildSprites, CELL } from "./sprites";
 import { drawText, drawWindow, Info, Menu, MessageLog, TextInput, UiStack } from "./ui";
@@ -139,6 +140,8 @@ interface Mob {
   target: readonly [number, number] | null;
   /** A speech bubble while chatting with a neighbor. */
   bubble: { text: string; until: number } | null;
+  /** Indoors until this time (they went home for a bit). */
+  hiddenUntil: number;
 }
 
 interface Player {
@@ -172,7 +175,7 @@ function myItems(): ItemView[] {
 }
 
 function occupied(x: number, y: number): boolean {
-  return mobs.some((m) => m.x === x && m.y === y);
+  return mobs.some((m) => m.x === x && m.y === y && performance.now() >= m.hiddenUntil);
 }
 
 function walkable(x: number, y: number): boolean {
@@ -194,6 +197,7 @@ async function refreshWorld(repositionHero: boolean): Promise<void> {
     home: map?.villages.find((v) => v.regionId === p.agent.region),
     target: null,
     bubble: null,
+    hiddenUntil: 0,
   }));
   const flowers: (readonly [number, number])[] = [];
   for (let fy = 0; fy < MAP_H; fy++) {
@@ -403,10 +407,14 @@ function rebuildTicker(): void {
     richest ? `ちょうじゃ: ${richest.id} (${richest.balances.currency}G)` : "",
     trusted && trusted.trust > 0 ? `しんらいNo.1: ${trusted.id} (しんらい${trusted.trust})` : "",
     newest ? `さいしんのむら: ${newest.displayName}` : "",
+    genomeHeadlines.length > 0 ? `【しんか】${genomeHeadlines[snapshot.logLength % genomeHeadlines.length] ?? ""}` : "",
     `むら${snapshot.regions.filter((r) => r.id !== AFTERLIFE).length} / じゅうみん${folk.length}にん / けっこん${weddingBook.marriages}くみ / できごと${snapshot.logLength}`,
   ].filter((t) => t.length > 0);
   tickerText = items.join("  ◆  ");
 }
+
+// Headlines the genome daemon wrote — sprinkled into the かわらばん rotation.
+let genomeHeadlines: readonly string[] = [];
 
 let title = "かけだしの たびびと";
 
@@ -478,6 +486,12 @@ function npcMenu(mob: Mob): void {
                 map?.villages.find((v) => v.regionId === a.region)?.biome ?? Biome.Plains,
                 (snapshot?.logLength ?? 500) - (a.admittedAtSeq ?? 0),
                 isChildName(a.id),
+                {
+                  powered: map?.villages.find((v) => v.regionId === a.region)?.powered,
+                  tier: map?.villages.find((v) => v.regionId === a.region)?.tier,
+                  married: weddingBook.isMarried(a.id),
+                  festival: festivals.has(a.region),
+                },
               ),
               "",
               `しょくぎょう: ${roleJa(a.role)}`,
@@ -548,6 +562,15 @@ function villageInfo(ctx: VillageContext): void {
       (() => {
         const v = map?.villages.find((x) => x.regionId === region.id);
         return `きこう: ${BIOME_JA[v?.biome ?? Biome.Plains]}  はってん: ${["むら", "まち", "とし", "だいとし"][v?.tier ?? 0]}  でんき: ${v?.powered ? "つうでん" : "みでんか"}`;
+      })(),
+      (() => {
+        const v = map?.villages.find((x) => x.regionId === region.id);
+        const host = v?.parent ? map?.villages.find((o) => o.regionId === v.parent) : null;
+        const bloc = prefectures(
+          snapshot?.regions.filter((r) => r.id !== AFTERLIFE) ?? [],
+          (id) => map?.villages.find((o) => o.regionId === id)?.tier ?? 0,
+        ).find((bl) => bl.members.includes(region.id));
+        return `しちょうそん: ${region.displayName}${municipalRank(v?.tier ?? 0)}${host ? ` — ${host.displayName}${municipalRank(host.tier)}の ちく` : ""}${bloc ? `  しょぞく: ${bloc.name}` : ""}`;
       })(),
       `せいじ: ${REGIME_JA[classifyRegime(region.institutions.governance as GovernanceValue)].label}`,
       `どうぐづくり: ${ctx.mintingOpen ? "だれでも" : "あるじのみ"}`,
@@ -706,6 +729,7 @@ function courtMenu(village: Village): void {
       { label: "ひょうけつを みる", value: "proposal" },
       { label: "とうひょうする", value: "vote", disabled: !region.openProposal || !ctx.livesHere },
       { label: "おきてを ていあんする", value: "propose", disabled: !ctx.isCouncil || !ctx.livesHere || !!region.openProposal },
+      { label: "ろっぽうぜんしょ (ほうたいけい)", value: "lawbook" },
       { label: "しんらいの だいちょう", value: "trust" },
       { label: "やめる", value: "cancel" },
     ], (value) => {
@@ -713,7 +737,7 @@ function courtMenu(village: Village): void {
         ui.push(
           new Info("ひょうけつ", region.openProposal
             ? [
-                `ぎだい: ${lawText(region.openProposal.change)}`,
+                `ぎだい: 【${lawLayer(String((region.openProposal.change as Record<string, unknown> | undefined)?.["policy"] ?? ""))}】${lawText(region.openProposal.change)}`,
                 `ていあんしゃ: ${region.openProposal.proposedBy}`,
                 `とうひょう: ${region.openProposal.votes.length}`,
                 ...region.openProposal.votes.map((v) => `  ${v}`),
@@ -735,6 +759,24 @@ function courtMenu(village: Village): void {
             }
           }, () => ui.pop()),
         );
+      } else if (value === "lawbook") {
+        const v = map?.villages.find((x) => x.regionId === region.id);
+        const host = v?.parent ? snapshot?.regions.find((r) => r.id === v.parent) : null;
+        const lines = [
+          `【けんぽう】 せいじたいせい: ${REGIME_JA[classifyRegime(region.institutions.governance as GovernanceValue)].label}`,
+          `【ほうりつ】 ちゅうぞうほう: ${region.institutions.itemPolicy.minting === "anyone" ? "だれでも" : region.institutions.itemPolicy.minting === "residents" ? "じゅうみんのみ" : "あるじのみ"}`,
+          `【ほうりつ】 ぜいせい: てすうりょう ${Math.round(region.institutions.economyPolicy.baseCostRate * 100)}%`,
+          `【じょうれい】 がいこう: ${STANCE_JA[region.institutions.diplomacyPolicy.defaultStance]} (こべつのとりきめ ${Object.keys(region.institutions.diplomacyPolicy.overrides).length}けん)`,
+          ...(host
+            ? [
+                `── じょういほう: ${host.displayName}${municipalRank(map?.villages.find((o) => o.regionId === host.id)?.tier ?? 0)}の ほう ──`,
+                `【けんぽう】 ${REGIME_JA[classifyRegime(host.institutions.governance as GovernanceValue)].label}`,
+                `【ほうりつ】 ちゅうぞう ${host.institutions.itemPolicy.minting} / ぜい ${Math.round(host.institutions.economyPolicy.baseCostRate * 100)}%`,
+              ]
+            : []),
+          "けんぽう > ほうりつ > じょうれい の じゅんに つよい。",
+        ];
+        ui.push(new Info("ろっぽうぜんしょ", lines, () => ui.pop()));
       } else if (value === "trust") {
         const residents = snapshot?.agents.filter((a) => a.region === region.id && a.role !== "treasury") ?? [];
         ui.push(
@@ -765,7 +807,7 @@ function shopMenu(village: Village): void {
   const stocked = (w2: (typeof CATALOG)[number]): boolean => (w2.price >= 80 ? vTier >= 2 : w2.price >= 30 ? vTier >= 1 : true);
   ui.push(
     new Menu(`${region.displayName}の どうぐや ${sale ? "★まつりセール★" : ""}(もちがね ${gold}G)`, [
-      ...CATALOG.map((w) => ({
+      ...allWares().map((w) => ({
         label: stocked(w) ? `${w.name}  ${priceOf(w.price)}G${sale ? ` (もと${w.price}G)` : ""}` : `${w.name}  — にゅうかは まちいこう`,
         value: w.kind,
         disabled: !stocked(w) || gold < priceOf(w.price),
@@ -773,7 +815,7 @@ function shopMenu(village: Village): void {
       { label: "やめる", value: "cancel" },
     ], (kind) => {
       if (kind === "cancel") return ui.clear();
-      const ware = CATALOG.find((w) => w.kind === kind);
+      const ware = allWares().find((w) => w.kind === kind);
       if (!ware) return ui.clear();
       ui.push(
         new Menu(`${ware.name} — ${ware.blurb} ${priceOf(ware.price)}Gで かう?`, [
@@ -1109,6 +1151,35 @@ function interact(): void {
     const village = map.villages.find((v) => v.stall[0] === fx && v.stall[1] === fy);
     if (village) return shopMenu(village);
   }
+  if (tile === Tile.Farm) {
+    ui.push(
+      new Menu("はたけが よく そだっている。", [
+        { label: "しゅうかくする (やさい)", value: "harvest", disabled: !snapshot.me.agentId },
+        { label: "やめる", value: "cancel" },
+      ], (v) => {
+        if (v === "harvest") void runAct({ kind: "forage", itemKind: "yasai" }, "やさいを しゅうかくする");
+        else ui.clear();
+      }, () => ui.clear()),
+    );
+    return;
+  }
+  if (tile === Tile.Water) {
+    ui.push(
+      new Menu("みずべだ。さかなの かげが みえる。", [
+        { label: "つりを する", value: "fish", disabled: !snapshot.me.agentId },
+        { label: "やめる", value: "cancel" },
+      ], (v) => {
+        if (v === "fish") void runAct({ kind: "forage", itemKind: "sakana" }, "つりを する");
+        else ui.clear();
+      }, () => ui.clear()),
+    );
+    return;
+  }
+  if (tile === Tile.Well) {
+    ui.push(new Info("いど", ["つめたい みずを ごくり。", "…げんきが でた!"], () => ui.pop()));
+    se("confirm");
+    return;
+  }
   if (tile === Tile.Poster) {
     const village = map.villages.find((v) => v.poster[0] === fx && v.poster[1] === fy);
     if (village) return posterMenu(village);
@@ -1344,7 +1415,7 @@ window.addEventListener("keydown", (e) => {
         // Face-adjacent to the occupant? Then chat, using the same real menu.
         if (Math.abs(interior.px - 3) + Math.abs(interior.py - 2) === 1) {
           se("confirm");
-          npcMenu({ agent: interior.occupant, x: 0, y: 0, px: 0, py: 0, timer: 0, frame: 0, home: undefined, target: null, bubble: null });
+          npcMenu({ agent: interior.occupant, x: 0, y: 0, px: 0, py: 0, timer: 0, frame: 0, home: undefined, target: null, bubble: null, hiddenUntil: 0 });
           return;
         }
       }
@@ -1491,7 +1562,7 @@ function update(dt: number): void {
     const mx = mob.x * CELL;
     const my = mob.y * CELL;
     if (mob.px !== mx || mob.py !== my) {
-      const step = 1.6 * (dt / 16.7);
+      const step = (isChildName(mob.agent.id) ? 2.6 : 1.6) * (dt / 16.7);
       mob.px += Math.sign(mx - mob.px) * Math.min(step, Math.abs(mx - mob.px));
       mob.py += Math.sign(my - mob.py) * Math.min(step, Math.abs(my - mob.py));
       mob.frame = Math.floor(performance.now() / 200) % 2;
@@ -1524,17 +1595,33 @@ function update(dt: number): void {
       const pois: (readonly [number, number])[] = [
         [home.stall[0], home.stall[1] + 1],
         [home.sign[0], home.sign[1] - 1],
+        [home.hall[0], home.hall[1] + 1],
+        [home.mint[0], home.mint[1] + 1],
+        [home.court[0], home.court[1] + 1],
+        ...(home.hospital ? [[home.hospital[0], home.hospital[1] + 1] as const] : []),
+        ...home.homes.map(([hx2, hy2]) => [hx2, hy2 + 1] as const),
         ...home.spots,
         ...mobs.filter((o) => o !== mob && o.home === home).map((o) => [o.x, o.y] as const),
       ];
       mob.target = pois[Math.floor(Math.random() * pois.length)] ?? null;
+      // Sometimes the errand is simply going home for a while.
+      if (Math.random() < 0.18 && home.homes.length > 0) {
+        const door = home.homes[Math.floor(Math.random() * home.homes.length)];
+        if (door) mob.target = [door[0], door[1] + 1] as const;
+      }
     }
 
     let dx = 0;
     let dy = 0;
     if (mob.target) {
       const [gx2, gy2] = mob.target;
-      if (mob.x === gx2 && mob.y === gy2) mob.target = null;
+      if (mob.x === gx2 && mob.y === gy2) {
+        // Arrived at a doorstep? Step inside for a spell.
+        if (mob.home?.homes.some(([hx2, hy2]) => hx2 === gx2 && hy2 === gy2 - 1) && Math.random() < 0.7) {
+          mob.hiddenUntil = performance.now() + 4000 + Math.random() * 6000;
+        }
+        mob.target = null;
+      }
       else if (Math.abs(gx2 - mob.x) >= Math.abs(gy2 - mob.y)) dx = Math.sign(gx2 - mob.x);
       else dy = Math.sign(gy2 - mob.y);
       if (Math.random() < 0.08) mob.target = null; // sometimes they forget the errand
@@ -1617,7 +1704,14 @@ function render(): void {
   }
 
   for (const village of map.villages) {
-    drawText(ctx, `${village.displayName} (${BIOME_JA[village.biome]})`, village.x * CELL - camX + 8, (village.y - 1) * CELL - camY + 20, "#ffd75e");
+    const hostV = village.parent ? map.villages.find((o) => o.regionId === village.parent) : null;
+    drawText(
+      ctx,
+      `${village.displayName}${municipalRank(village.tier)}${hostV ? `〔${hostV.displayName}${municipalRank(hostV.tier)}内〕` : ""} (${BIOME_JA[village.biome]})`,
+      village.x * CELL - camX + 8,
+      (village.y - 1) * CELL - camY + 20,
+      "#ffd75e",
+    );
     ctx.font = '13px "DotGothic16", monospace';
     ctx.fillStyle = "#ffffff";
     const label = (text: string, at: readonly [number, number]) =>
@@ -1683,6 +1777,7 @@ function render(): void {
   }
 
   for (const mob of mobs) {
+    if (performance.now() < mob.hiddenUntil) continue; // indoors
     const pair = sprites.roles[mob.agent.role] ?? sprites.roles["artisan"];
     if (pair) ctx.drawImage(pair[mob.frame === 0 ? 0 : 1], mob.px - camX, mob.py - camY);
   }
@@ -2001,6 +2096,17 @@ async function poll(): Promise<void> {
 }
 
 // Debug handle (harmless in prod; lets tooling inspect position/keys).
+// The genome: LLM-grown vocabulary/wares/chatter, validated as pure data.
+void loadGenome().then((g) => {
+  if (!g) return;
+  registerKindNames(g.vocab);
+  registerChatter(g.chatter);
+  registerWares(g.wares);
+  genomeHeadlines = g.headlines;
+  const grown = Object.keys(g.vocab).length + g.wares.length + g.professions.length;
+  if (grown > 0) log.push(`せかいの ことばが しんかしている… (ゲノム v${g.version})`);
+});
+
 Object.defineProperty(window, "__vq", { value: { player, held, mobs: () => mobs.map((m) => [m.agent.id, m.x, m.y, Math.round(m.timer), m.target]), tile: (x: number, y: number) => (map ? tileAt(map, x, y) : -1), solid: (x: number, y: number) => (map ? isSolid(map, x, y) : true) }, configurable: true });
 
 function renderTitle(): void {

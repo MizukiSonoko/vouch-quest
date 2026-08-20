@@ -27,9 +27,47 @@ export function wareByKind(kind: string): Ware | null {
   return CATALOG.find((w) => w.kind === kind) ?? null;
 }
 
+const EXTRA_NAMES: Readonly<Record<string, string>> = {
+  yasai: "やさい",
+  sakana: "さかな",
+  byoki: "びょうき",
+  bread: "パン",
+  fish: "さかな",
+  lantern: "ランタン",
+  rope: "ロープ",
+  boots: "ながぐつ",
+  tea: "おちゃ",
+  brick: "レンガ",
+  gear: "はぐるま",
+  kuzutetsu: "くずてつ",
+  nisegane: "にせがね",
+  garakuta: "ガラクタ",
+};
+
+// Vocabulary learned from the genome (see genome.ts) — merged at boot.
+const LEARNED_NAMES: Record<string, string> = {};
+const EXTRA_WARES: Ware[] = [];
+
+export function registerKindNames(names: Readonly<Record<string, string>>): void {
+  for (const [k, v] of Object.entries(names)) LEARNED_NAMES[k] = v;
+}
+
+/** Genome wares join the shop shelves — never shadowing the fixed catalog. */
+export function registerWares(wares: readonly Ware[]): void {
+  for (const w of wares) {
+    if (CATALOG.some((c) => c.kind === w.kind) || EXTRA_WARES.some((c) => c.kind === w.kind)) continue;
+    EXTRA_WARES.push(w);
+  }
+}
+
+export function allWares(): readonly Ware[] {
+  return [...CATALOG, ...EXTRA_WARES];
+}
+
 /** Display name for any item kind — catalog names for wares, the raw kind otherwise. */
 export function kindName(kind: string): string {
-  return wareByKind(kind)?.name ?? kind;
+  const base = kind.replace(/\d+$/, "");
+  return wareByKind(kind)?.name ?? EXTRA_WARES.find((w) => w.kind === base)?.name ?? EXTRA_NAMES[base] ?? LEARNED_NAMES[base] ?? kind;
 }
 
 /**
@@ -84,4 +122,41 @@ export function friendlyPairs(regions: readonly RegionView[]): [string, string][
     }
   }
   return pairs;
+}
+
+/** Prefectures: connected components of the friendship graph. The strongest
+ * member is the seat; singleton villages stay independent. */
+export interface Bloc {
+  readonly name: string;
+  readonly seat: string;
+  readonly members: readonly string[];
+}
+
+export function prefectures(regions: readonly RegionView[], tierOf: (id: string) => number): Bloc[] {
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    const p = parent.get(x) ?? x;
+    if (p === x) return x;
+    const root = find(p);
+    parent.set(x, root);
+    return root;
+  };
+  const union = (a: string, b: string): void => {
+    parent.set(find(a), find(b));
+  };
+  for (const r of regions) parent.set(r.id, r.id);
+  for (const [a, b] of friendlyPairs(regions)) union(a, b);
+  const groups = new Map<string, string[]>();
+  for (const r of regions) {
+    const root = find(r.id);
+    groups.set(root, [...(groups.get(root) ?? []), r.id]);
+  }
+  const blocs: Bloc[] = [];
+  for (const members of groups.values()) {
+    if (members.length < 2) continue;
+    const seat = [...members].sort((a, b) => tierOf(b) - tierOf(a) || a.localeCompare(b))[0] ?? members[0] ?? "";
+    const seatName = regions.find((r) => r.id === seat)?.displayName ?? seat;
+    blocs.push({ name: `${seatName}けん`, seat, members });
+  }
+  return blocs;
 }

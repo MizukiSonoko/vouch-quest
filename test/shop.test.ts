@@ -97,3 +97,40 @@ describe("diplomacy", () => {
     for (const v of m.villages) expect(tileAt(m, v.stall[0], v.stall[1])).toBe(Tile.Stall);
   });
 });
+
+describe("municipal system (市町村)", () => {
+  test("prefectures form over the friendship graph, seat = strongest", () => {
+    const a = region("asahi", 1, { overrides: { tsuki: "absorb" } });
+    const b = region("tsuki", 2, { overrides: { asahi: "absorb" } });
+    const c = region("yuhi", 3); // no friends → independent
+    const { prefectures } = require("../src/client/shop");
+    const blocs = prefectures([a, b, c], (id: string) => (id === "tsuki" ? 2 : 0));
+    expect(blocs.length).toBe(1);
+    expect(blocs[0].seat).toBe("tsuki");
+    expect(blocs[0].name).toBe("TSUKIけん");
+    expect(blocs[0].members.sort()).toEqual(["asahi", "tsuki"]);
+  });
+
+  test("law layers: 憲法 > 法律 > 条例", () => {
+    const { lawLayer, municipalRank } = require("../src/client/politics");
+    expect(lawLayer("governance")).toBe("けんぽう");
+    expect(lawLayer("economy")).toBe("ほうりつ");
+    expect(lawLayer("items")).toBe("ほうりつ");
+    expect(lawLayer("diplomacy")).toBe("じょうれい");
+    expect(municipalRank(0)).toBe("村");
+    expect(municipalRank(3)).toBe("都");
+    expect(municipalRank(9)).toBe("都");
+  });
+
+  test("a small village inside a city's territory becomes its district", () => {
+    const m = buildMap(snapshot([region("asahi", 1), region("tsuki", 2)], "Rei@asahi"));
+    // parent is null unless the centre actually falls inside a HIGHER-tier blob
+    for (const v of m.villages) {
+      if (v.parent) {
+        const host = m.villages.find((o) => o.regionId === v.parent);
+        expect(host).toBeTruthy();
+        expect((host?.tier ?? 0) > v.tier).toBe(true);
+      }
+    }
+  });
+});

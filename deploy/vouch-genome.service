@@ -1,0 +1,12 @@
+[Unit]
+Description=vouch-quest genome content server (read-only)
+After=network.target
+
+[Service]
+ExecStart=%h/.bun/bin/bun %h/vouch/vouch-cli/serve-genome.ts
+Environment=GENOME_PATH=%h/vouch-data/genome.json
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

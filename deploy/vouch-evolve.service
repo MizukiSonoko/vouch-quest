@@ -1,0 +1,9 @@
+[Unit]
+Description=vouch-quest evolution daemon (one shot)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/vouch/vouch-cli
+EnvironmentFile=%h/.config/vouch/evolver.env
+ExecStart=%h/.bun/bin/bun %h/vouch/vouch-cli/evolve.ts

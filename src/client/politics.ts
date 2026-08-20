@@ -91,3 +91,16 @@ export function lawText(change: Record<string, unknown> | undefined): string {
   if (policy === "diplomacy") return "がいこうほうしん の あらため";
   return `おきて (${String(policy)})`;
 }
+
+/** The legal layer a policy belongs to: constitution > statute > ordinance. */
+export function lawLayer(policy: string | undefined): string {
+  if (policy === "governance") return "けんぽう";
+  if (policy === "economy" || policy === "items") return "ほうりつ";
+  if (policy === "diplomacy") return "じょうれい";
+  return "きそく";
+}
+
+/** Municipal rank by development tier: 村 → 町 → 市 → 都. */
+export function municipalRank(tier: number): string {
+  return ["村", "町", "市", "都"][Math.max(0, Math.min(3, tier))] ?? "村";
+}

@@ -32,6 +32,7 @@ export const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("amendMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
   z.object({ kind: z.literal("amendGovernance"), regionId, regime: z.enum(REGIMES as [Regime, ...Regime[]]) }),
   z.object({ kind: z.literal("buyItem"), regionId, ware: z.string().min(1).max(32), price: z.number().int().min(1).max(1000).optional() }),
+  z.object({ kind: z.literal("forage"), itemKind: z.string().regex(/^[a-z]+$/).max(32) }),
   z.object({ kind: z.literal("amendDiplomacy"), regionId, target: regionId, stance: z.enum(["absorb", "map", "reexamine", "reject"]) }),
   z.object({ kind: z.literal("proposeDiplomacy"), regionId, target: regionId, stance: z.enum(["absorb", "map", "reexamine", "reject"]) }),
   z.object({ kind: z.literal("proposeMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
@@ -160,6 +161,18 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
       const minted = minting === "owner" ? await asOwner(wallet, hero, command) : await asAgent(wallet, hero, () => command);
       if (!minted.ok) return { ok: false, reason: "だいきんは はらったのに しなものが でてこない… (" + minted.reason + ")" };
       return { ok: true, detail: { ware: ware.kind, price } };
+    }
+    case "forage": {
+      // Harvesting and fishing mint under the HERO's home minting law (the mint-item
+      // gate consults the recipient's region), signed by whoever that law names.
+      if (!hero.agentId) return { ok: false, reason: "no-agent: found or join a village first" };
+      const home = hero.agentId.split("@")[1] ?? "";
+      const regions = (await reads.regions()) as RegionView[];
+      const region = regions.find((r) => r.id === home);
+      if (!region) return { ok: false, reason: "unknown-region" };
+      const command = { kind: "mint-item", itemId: newItemId(action.itemKind), itemKind: action.itemKind, owner: hero.agentId };
+      const minting = region.institutions.itemPolicy.minting;
+      return minting === "owner" ? asOwner(wallet, hero, command) : asAgent(wallet, hero, () => command);
     }
     case "amendDiplomacy":
     case "proposeDiplomacy": {

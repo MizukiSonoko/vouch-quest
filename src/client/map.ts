@@ -128,6 +128,8 @@ export interface Village {
   readonly substation: readonly [number, number] | null;
   /** Whether the settlement is on the grid (a plant is in transmission range). */
   powered: boolean;
+  /** Municipal nesting: the city whose territory contains this settlement's centre (むらの中のむら). */
+  parent: string | null;
   readonly x: number;
   readonly y: number;
   readonly w: number;
@@ -603,6 +605,14 @@ function carveVillage(
     }
   }
 
+  // A metropolis lays a central boulevard — the seam between its districts.
+  if (tier >= 3) {
+    const midY = vy + Math.floor(h / 2);
+    for (let x = vx + 1; x < vx + w - 1; x++) {
+      if (isFree(x, midY)) set(tiles, x, midY, Tile.Pavement);
+    }
+  }
+
   // Extra NPC spots on remaining free cells.
   for (let tries = 0; spots.length < 26 && tries < 90; tries++) {
     const sx = vx + 2 + Math.floor(rng() * (w - 4));
@@ -653,7 +663,7 @@ function carveVillage(
     }
   }
 
-  return { x: vx, y: vy, w, h, biome, cells, tier, station, airport, plant, substation, powered: false, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, hospital, spots, homes };
+  return { x: vx, y: vy, w, h, biome, cells, tier, station, airport, plant, substation, powered: false, parent: null as string | null, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, hospital, spots, homes };
 }
 
 export function buildMap(snapshot: Snapshot): WorldMap {
@@ -701,6 +711,17 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     const carved = carveVillage(tiles, region.id, i, residents, devTier(residents, treasury));
     return { regionId: region.id, displayName: region.displayName, ...carved };
   });
+
+  // Municipal nesting: a settlement whose centre falls inside a HIGHER-tier
+  // settlement's territory becomes a district (ちく) of that city — 村の中に村.
+  for (const v of villages) {
+    const cx = v.x + Math.floor(v.w / 2);
+    const cy = v.y + Math.floor(v.h / 2);
+    const host = villages
+      .filter((o) => o.regionId !== v.regionId && o.tier > v.tier && villageContains(o, cx, cy))
+      .sort((p1, p2) => p2.tier - p1.tier)[0];
+    v.parent = host?.regionId ?? null;
+  }
 
   // Diplomacy made visible: mutually friendly villages get a road between their
   // gates. Roads never cut through a village plot — a fence stays a fence.
