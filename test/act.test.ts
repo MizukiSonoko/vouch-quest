@@ -14,9 +14,9 @@ describe("actionSchema", () => {
       { kind: "admit", agentName: "Ken", region: "asahi", role: "artisan", currency: 50 },
       { kind: "mintItem", itemKind: "sword", owner: "mizuki@asahi" },
       { kind: "amendMinting", regionId: "asahi", minting: "anyone" },
-      { kind: "amendGovernance", regionId: "asahi", governance: "council" },
+      { kind: "amendGovernance", regionId: "asahi", regime: "democracy" },
       { kind: "proposeMinting", regionId: "asahi", minting: "anyone" },
-      { kind: "proposeGovernance", regionId: "asahi", governance: "dictatorship" },
+      { kind: "proposeGovernance", regionId: "asahi", regime: "republic" },
     ];
     for (const action of good) expect(actionSchema.safeParse(action).success).toBe(true);
   });
@@ -30,7 +30,7 @@ describe("actionSchema", () => {
       { kind: "admit", agentName: "9ken", region: "asahi", role: "artisan" }, // names start with a letter
       { kind: "admit", agentName: "Ken", region: "asahi", role: "treasury" }, // players cannot admit treasuries
       { kind: "selfdestruct" },
-      { kind: "proposeGovernance", regionId: "asahi", governance: "council" }, // council→council is not a proposal preset
+      { kind: "proposeGovernance", regionId: "asahi", regime: "monarchy" }, // not a known regime
     ];
     for (const action of bad) expect(actionSchema.safeParse(action).success).toBe(false);
   });

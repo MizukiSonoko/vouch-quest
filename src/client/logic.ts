@@ -6,6 +6,7 @@
 
 import { z } from "zod";
 import type { ActResult, AgentView, ItemView, MeView, RegionView, Snapshot } from "../shared";
+import { buildGovernance, type Regime, REGIMES } from "./politics";
 import { wareByKind } from "./shop";
 import { account, type BrowserWallet, reads, register, submit, type SubmitResult } from "./wire";
 
@@ -29,12 +30,12 @@ export const actionSchema = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("mintItem"), itemKind: z.string().min(1).max(32), owner: identifier }),
   z.object({ kind: z.literal("amendMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
-  z.object({ kind: z.literal("amendGovernance"), regionId, governance: z.enum(["dictatorship", "council"]) }),
+  z.object({ kind: z.literal("amendGovernance"), regionId, regime: z.enum(REGIMES as [Regime, ...Regime[]]) }),
   z.object({ kind: z.literal("buyItem"), regionId, ware: z.string().min(1).max(32) }),
   z.object({ kind: z.literal("amendDiplomacy"), regionId, target: regionId, stance: z.enum(["absorb", "map", "reexamine", "reject"]) }),
   z.object({ kind: z.literal("proposeDiplomacy"), regionId, target: regionId, stance: z.enum(["absorb", "map", "reexamine", "reject"]) }),
   z.object({ kind: z.literal("proposeMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
-  z.object({ kind: z.literal("proposeGovernance"), regionId, governance: z.enum(["dictatorship"]) }),
+  z.object({ kind: z.literal("proposeGovernance"), regionId, regime: z.enum(REGIMES as [Regime, ...Regime[]]) }),
 ]);
 
 export type Action = z.infer<typeof actionSchema>;
@@ -123,26 +124,17 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
         regionId: action.regionId,
         change: { policy: "items", value: { minting: action.minting } },
       });
-    case "amendGovernance": {
-      // Dictatorship → council needs a member roll and a threshold; preset both from
-      // the current residents (simple majority). The node rejects amend under council.
-      if (action.governance === "dictatorship") {
-        return asOwner(wallet, hero, {
-          kind: "amend",
-          regionId: action.regionId,
-          change: { policy: "governance", value: { kind: "dictatorship" } },
-        });
+    case "amendGovernance":
+    case "proposeGovernance": {
+      // Constitutions are presets over the raw governance primitive; the member
+      // roll comes from the region's REAL residents, most reputable first.
+      const residents = await residentIds(action.regionId);
+      if (residents.length === 0 && action.regime !== "dictatorship") return { ok: false, reason: "no-residents-for-council" };
+      const change = { policy: "governance", value: buildGovernance(action.regime, residents) };
+      if (action.kind === "amendGovernance") {
+        return asOwner(wallet, hero, { kind: "amend", regionId: action.regionId, change });
       }
-      const members = await residentIds(action.regionId);
-      if (members.length === 0) return { ok: false, reason: "no-residents-for-council" };
-      return asOwner(wallet, hero, {
-        kind: "amend",
-        regionId: action.regionId,
-        change: {
-          policy: "governance",
-          value: { kind: "council", members, threshold: Math.max(1, Math.ceil(members.length / 2)) },
-        },
-      });
+      return asAgent(wallet, hero, () => ({ kind: "propose", regionId: action.regionId, change }));
     }
     case "buyItem": {
       const ware = wareByKind(action.ware);
@@ -187,12 +179,7 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
         regionId: action.regionId,
         change: { policy: "items", value: { minting: action.minting } },
       }));
-    case "proposeGovernance":
-      return asAgent(wallet, hero, () => ({
-        kind: "propose",
-        regionId: action.regionId,
-        change: { policy: "governance", value: { kind: "dictatorship" } },
-      }));
+
   }
 }
 
@@ -200,8 +187,8 @@ async function residentIds(regionId: string): Promise<string[]> {
   const agents = (await reads.agents()) as AgentView[];
   return agents
     .filter((a) => a.region === regionId && a.role !== "treasury")
-    .map((a) => a.id)
-    .sort();
+    .sort((a, b) => b.reputation - a.reputation || b.trust - a.trust || a.id.localeCompare(b.id))
+    .map((a) => a.id);
 }
 
 /** Aggregate the node's read surface into the snapshot the renderer consumes. */

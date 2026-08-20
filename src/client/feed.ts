@@ -1,6 +1,7 @@
 // The village newspaper: world log events → Dragon Quest-style Japanese lines.
 
 import type { LogEventView } from "../shared";
+import { classifyRegime, type GovernanceValue, REGIME_JA } from "./politics";
 import { kindName } from "./shop";
 
 /** First string found at any of the dot-paths — event payloads nest differently per type. */
@@ -53,7 +54,11 @@ export function eventToMessage(event: LogEventView): string {
       if (policy === "economy") return `むら「${rid}」で ぜいせいかいかく! あたらしい ほうりつだ`;
       if (policy === "items") return `むら「${rid}」で ちゅうぞうほうが かいせいされた!`;
       if (policy === "diplomacy") return `むら「${rid}」が がいこうほうしんを あらためた`;
-      if (policy === "governance") return `むら「${rid}」の せいじたいせいが かわった!`;
+      if (policy === "governance") {
+        const value = ((p as Record<string, unknown>)["change"] as Record<string, unknown> | undefined)?.["value"];
+        const regime = value && typeof value === "object" ? classifyRegime(value as GovernanceValue) : null;
+        return regime ? `むら「${rid}」は ${REGIME_JA[regime].label}に いこうした!` : `むら「${rid}」の せいじたいせいが かわった!`;
+      }
       return `むら「${rid}」の おきてが かわった!`;
     }
     case "gov.proposal.opened":

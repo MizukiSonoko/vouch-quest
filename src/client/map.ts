@@ -370,7 +370,7 @@ function carveVillage(
   // emerge. A door swallowed by a later extension just means the family built on.
   const ROOFS: readonly Tile[] = [Tile.HouseRoof, Tile.RoofGreen, Tile.RoofBlue, Tile.RoofBrown];
   const houseDoors: { door: readonly [number, number]; tile: Tile }[] = [];
-  const houses = Math.min(Math.max(residents, 1), 8);
+  const houses = Math.min(Math.max(residents, 1), 12);
   for (let i = 0; i < houses; i++) {
     // Cities raise towers; towns get the occasional tall house; villages stay low.
     const tower = tier >= 2 && rng() < 0.55;
@@ -477,7 +477,7 @@ function carveVillage(
   }
 
   // Extra NPC spots on remaining free cells.
-  for (let tries = 0; spots.length < 12 && tries < 40; tries++) {
+  for (let tries = 0; spots.length < 18 && tries < 60; tries++) {
     const sx = vx + 2 + Math.floor(rng() * (w - 4));
     const sy = vy + 3 + Math.floor(rng() * (h - 5));
     if (isFree(sx, sy)) spots.push([sx, sy] as const);

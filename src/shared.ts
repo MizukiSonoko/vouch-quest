@@ -12,7 +12,14 @@ export interface RegionView {
   readonly foundedAtSeq: number;
   readonly salePrice: number | null;
   readonly institutions: {
-    readonly governance: { readonly kind: string };
+    readonly governance: {
+      readonly kind: string;
+      readonly members?: readonly string[];
+      readonly threshold?: number;
+      readonly electorate?: "members" | "citizens";
+      readonly quorum?: number;
+      readonly weighting?: "equal" | "reputation" | "stake";
+    };
     readonly itemPolicy: { readonly minting: string };
     readonly economyPolicy: { readonly baseCostRate: number; readonly minCostRate: number };
     readonly diplomacyPolicy: {

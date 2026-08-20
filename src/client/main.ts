@@ -10,6 +10,7 @@ import { npcLines } from "./dialogue";
 import { eventToMessage } from "./feed";
 import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, type WorldMap } from "./map";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
+import { classifyRegime, type GovernanceValue, REGIME_JA, REGIMES } from "./politics";
 import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
 import { canShopHere, CATALOG, kindName, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
 import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
@@ -357,13 +358,29 @@ function villageInfo(ctx: VillageContext): void {
     new Info(`むら「${region.displayName}」(${region.id})`, [
       `あるじ: ${region.owner ?? "なし"}  じょうたい: ${region.lifecycle}`,
       `きこう: ${BIOME_JA[map?.villages.find((v) => v.regionId === region.id)?.biome ?? Biome.Plains]}  はってん: ${["むら", "まち", "とし"][map?.villages.find((v) => v.regionId === region.id)?.tier ?? 0]}`,
-      `せいじ: ${ctx.isCouncil ? "ひょうぎかい" : "どくさいせい"}`,
+      `せいじ: ${REGIME_JA[classifyRegime(region.institutions.governance as GovernanceValue)].label}`,
       `どうぐづくり: ${ctx.mintingOpen ? "だれでも" : "あるじのみ"}`,
       `ぜいりつ: ${region.institutions.economyPolicy.baseCostRate} (さいてい ${region.institutions.economyPolicy.minCostRate})`,
       `きんこ: ${treasury?.balances.currency ?? 0}G  じゅうみん: ${residents.length}にん`,
       ...residents.map((r) => `  ${r.id} (${roleJa(r.role)}) ${r.balances.currency}G`),
       region.openProposal ? `ひょうけつちゅう! とうひょう ${region.openProposal.votes.length}` : "ひょうけつは ない",
     ], () => ui.pop()),
+  );
+}
+
+/** Pick a constitution: every regime the raw governance primitive can express. */
+function regimePicker(regionId: string, mode: "amend" | "propose"): void {
+  const current = snapshot?.regions.find((r) => r.id === regionId);
+  const now = current ? classifyRegime(current.institutions.governance as GovernanceValue) : "dictatorship";
+  ui.push(
+    new Menu(mode === "amend" ? "けんぽうを さだめる" : "けんぽうかいせいを ていあんする", [
+      ...REGIMES.filter((r) => r !== now).map((r) => ({ label: `${REGIME_JA[r].label} — ${REGIME_JA[r].desc}`, value: r })),
+      { label: "やめる", value: "cancel" },
+    ], (regime) => {
+      if (regime === "cancel") return ui.clear();
+      const kind = mode === "amend" ? "amendGovernance" : "proposeGovernance";
+      void runAct({ kind, regionId, regime }, "けんぽうを かえる");
+    }, () => ui.pop()),
   );
 }
 
@@ -378,7 +395,7 @@ function hallMenu(village: Village): void {
       { label: "この むらに ひっこす", value: "migrate", disabled: !heroAgent() || ctx.livesHere },
       { label: "いじゅうしゃを まねく", value: "admit", disabled: !ctx.isOwner },
       {
-        label: ctx.isCouncil ? "せいじたいせい (さいばんしょで ていあん)" : "ひょうぎかいせいに うつす",
+        label: ctx.isCouncil ? "けんぽう (さいばんしょで ていあん)" : "けんぽうを さだめる",
         value: "governance",
         disabled: !ctx.isOwner || ctx.isCouncil,
       },
@@ -406,15 +423,7 @@ function hallMenu(village: Village): void {
       } else if (value === "diplomacy") {
         diplomacyMenu(ctx);
       } else if (value === "governance") {
-        ui.push(
-          new Menu("ひょうぎかいせいに うつす? (もどすには ひょうけつが いる)", [
-            { label: "うつす", value: "yes" },
-            { label: "やめる", value: "no" },
-          ], (v) => {
-            if (v === "yes") void runAct({ kind: "amendGovernance", regionId: region.id, governance: "council" }, "せいじたいせいを かえる");
-            else ui.pop();
-          }, () => ui.pop()),
-        );
+        regimePicker(region.id, "amend");
       } else ui.clear();
     }, () => ui.clear()),
   );
@@ -482,12 +491,12 @@ function courtMenu(village: Village): void {
         ui.push(
           new Menu("なにを ていあんする?", [
             { label: `どうぐづくり: ${ctx.mintingOpen ? "あるじのみに もどす" : "だれでもに ひらく"}`, value: "minting" },
-            { label: "どくさいせいに もどす", value: "governance" },
+            { label: "けんぽうかいせい (せいじたいせい)", value: "governance" },
           ], (v) => {
             if (v === "minting") {
               void runAct({ kind: "proposeMinting", regionId: region.id, minting: ctx.mintingOpen ? "owner" : "anyone" }, "おきてを ていあんする");
             } else {
-              void runAct({ kind: "proposeGovernance", regionId: region.id, governance: "dictatorship" }, "せいじたいせいの へんこうを ていあんする");
+              regimePicker(region.id, "propose");
             }
           }, () => ui.pop()),
         );
@@ -1340,6 +1349,6 @@ void (async () => {
     log.push(error instanceof Error ? error.message : "せかいに つながらない…");
     log.push("SSHトンネルと ゲームサーバーを かくにんしてね。");
   }
-  setInterval(() => void poll(), 2500);
+  setInterval(() => void poll(), 1500);
   requestAnimationFrame(frame);
 })();

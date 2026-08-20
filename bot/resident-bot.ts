@@ -33,6 +33,7 @@ interface Region {
   id: string;
   owner: string | null;
   lifecycle: string;
+  openProposal: { votes: string[]; roll: { voter: string }[] } | null;
   institutions: {
     governance: { kind: string };
     itemPolicy: { minting: string };
@@ -66,10 +67,38 @@ const ROLES: Record<Name, "artisan" | "merchant" | "broker"> = {
   Momo: "merchant", Kaji: "artisan", Gin: "broker", Sora: "merchant",
   Toshi: "broker", Zai: "merchant", Ginko: "broker", Kuro: "merchant",
 };
-const SETTLERS = ["Hana", "Taro", "Suzu", "Gonta", "Mimi", "Roku", "Chiyo", "Bunta", "Kiku", "Nobu", "Ume", "Sen"];
+const SETTLERS = ["Hana", "Taro", "Suzu", "Gonta", "Mimi", "Roku", "Chiyo", "Bunta", "Kiku", "Nobu", "Ume", "Sen", "Rin", "Kota", "Yuki", "Asa", "Fuku", "Tetsu", "Nana", "Goro"];
 const WARES = ["bread", "fish", "lantern", "rope", "boots", "tea", "brick", "gear"];
 const JUNK = ["kuzutetsu", "nisegane", "garakuta"];
 const TOWNS = ["ichiba", "minato", "kaido", "hoshi", "takumi", "yama", "izumi", "sakura"];
+
+// --- constitutions: presets over the raw governance primitive -------------------
+
+type Regime = "dictatorship" | "oligarchy" | "republic" | "democracy" | "meritocracy" | "plutocracy" | "consensus";
+const REGIMES: readonly Regime[] = ["dictatorship", "oligarchy", "republic", "democracy", "meritocracy", "plutocracy", "consensus"];
+
+function buildGovernance(regime: Regime, residents: readonly string[]): Record<string, unknown> {
+  const n = Math.max(residents.length, 1);
+  const majority = Math.max(1, Math.ceil(n / 2));
+  switch (regime) {
+    case "dictatorship":
+      return { kind: "dictatorship" };
+    case "oligarchy":
+      return { kind: "council", members: residents.slice(0, Math.min(2, n)), threshold: 1 };
+    case "republic": {
+      const reps = residents.slice(0, majority);
+      return { kind: "council", members: reps, threshold: Math.max(1, Math.ceil(reps.length / 2)) };
+    }
+    case "democracy":
+      return { kind: "council", members: [...residents], threshold: majority, electorate: "citizens", quorum: majority, weighting: "equal" };
+    case "meritocracy":
+      return { kind: "council", members: [...residents], threshold: majority, electorate: "citizens", weighting: "reputation" };
+    case "plutocracy":
+      return { kind: "council", members: [...residents], threshold: majority, electorate: "citizens", weighting: "stake" };
+    case "consensus":
+      return { kind: "council", members: [...residents], threshold: n, electorate: "citizens", quorum: n, weighting: "equal" };
+  }
+}
 
 function clientFor(name: string): VouchClient {
   // Momo predates the troupe and keeps the v1 key derivation (plain secret).
@@ -195,6 +224,42 @@ async function act(name: Name): Promise<void> {
     }
   }
 
+  // Civic duty: a resident on an open proposal's roll casts their ballot.
+  for (const region of regions) {
+    const prop = region.openProposal;
+    if (!prop) continue;
+    const onRoll = prop.roll.some((r) => r.voter === me.id);
+    const voted = prop.votes.includes(me.id);
+    if (onRoll && !voted && rand() < 0.85) {
+      say(name, `votes on the proposal in ${region.id}`, await client.vote(me.id, region.id));
+      await sleep(1400);
+    }
+  }
+
+  // Constitutional politics: a town's dictator occasionally decrees a new regime;
+  // a resident of a council town occasionally proposes one instead.
+  if (rand() < 0.12) {
+    const town = owned.find((t) => t.institutions.governance.kind === "dictatorship");
+    if (town) {
+      const residents = agents.filter((a) => a.region === town.id && a.role !== "treasury").map((a) => a.id);
+      if (residents.length >= 2) {
+        const regime = pick(REGIMES.filter((r) => r !== "dictatorship"));
+        say(name, `decrees a new constitution for ${town.id}: ${regime}`,
+          await client.amend(name, town.id, { policy: "governance", value: buildGovernance(regime, residents) }));
+        await sleep(1400);
+      }
+    }
+  } else if (rand() < 0.08) {
+    const home = regions.find((r) => r.id === me.region);
+    if (home && home.institutions.governance.kind === "council" && !home.openProposal) {
+      const residents = agents.filter((a) => a.region === home.id && a.role !== "treasury").map((a) => a.id);
+      const regime = pick(REGIMES);
+      say(name, `proposes a new constitution for ${home.id}: ${regime}`,
+        await client.propose(me.id, home.id, { policy: "governance", value: buildGovernance(regime, residents) }));
+      await sleep(1400);
+    }
+  }
+
   const rounds = 1 + Math.floor(rand() * 2);
   for (let i = 0; i < rounds; i++) {
     const roll = rand();
@@ -214,8 +279,12 @@ async function act(name: Name): Promise<void> {
         } else if (roll < 0.6 && owned.length > 0) {
           const town = pick(owned);
           const residents = agents.filter((a) => a.region === town.id && a.role !== "treasury").length;
-          const fresh = SETTLERS.find((n) => !agents.some((a) => a.id === `${n}@${town.id}`));
-          if (residents < 9 && fresh) say(name, `hires ${fresh} for ${town.id}`, await client.admit(name, `${fresh}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 45));
+          const fresh = SETTLERS.filter((n) => !agents.some((a) => a.id === `${n}@${town.id}`)).slice(0, 2);
+          for (const f of fresh) {
+            if (residents >= 14) break;
+            say(name, `hires ${f} for ${town.id}`, await client.admit(name, `${f}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 45));
+            await sleep(1300);
+          }
         } else if (roll < 0.75 && owned.length > 0) {
           const town = pick(owned);
           if (town.institutions.economyPolicy.baseCostRate > 0.1 && town.institutions.governance.kind === "dictatorship") {
@@ -245,8 +314,12 @@ async function act(name: Name): Promise<void> {
       } else if (roll < 0.82 && owned.length > 0) {
         const town = pick(owned);
         const residents = agents.filter((a) => a.region === town.id && a.role !== "treasury").length;
-        const fresh = SETTLERS.find((n) => !agents.some((a) => a.id === `${n}@${town.id}`));
-        if (residents < 9 && fresh) say(name, `invites ${fresh} to ${town.id}`, await client.admit(name, `${fresh}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 40));
+        const fresh = SETTLERS.filter((n) => !agents.some((a) => a.id === `${n}@${town.id}`)).slice(0, 2);
+        for (const f of fresh) {
+          if (residents >= 14) break;
+          say(name, `invites ${f} to ${town.id}`, await client.admit(name, `${f}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 40));
+          await sleep(1300);
+        }
       } else if (roll < 0.9 && owned.length > 0) {
         const town = pick(owned);
         if (town.institutions.governance.kind === "dictatorship") {
