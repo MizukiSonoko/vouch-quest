@@ -167,6 +167,8 @@ export interface WorldMap {
   readonly villages: readonly Village[];
   /** Rail segments (tile-coordinate polylines) for the running trains. */
   readonly rails: readonly (readonly (readonly [number, number])[])[];
+  /** Ground rail polylines only — the walkable subway network runs beneath these. */
+  readonly subways: readonly (readonly (readonly [number, number])[])[];
   /** Road polylines between friendly villages — the caravans travel these. */
   readonly roads: readonly (readonly (readonly [number, number])[])[];
   /** Highway polylines between friendly CITIES — trucks thunder along these. */
@@ -842,6 +844,8 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     rails.push(path);
   }
 
+  const subways = rails.map((r) => r);
+
   // 高架鉄道: metropolises get a direct elevated express — it strides straight
   // across water and countryside on concrete pillars, cutting corners diagonally.
   const metros = villages.filter((v) => v.tier >= 3 && v.station).sort((a, b) => a.x - b.x || a.y - b.y);
@@ -887,7 +891,7 @@ export function buildMap(snapshot: Snapshot): WorldMap {
   }
   for (const pv of plants) pv.powered = true; // the plant powers its own city
 
-  return { tiles, villages, rails, roads, highways, powerLines };
+  return { tiles, villages, rails, subways, roads, highways, powerLines };
 }
 
 /** Stable NPC placement: region residents (minus the hero) each take a village spot. */

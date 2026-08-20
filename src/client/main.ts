@@ -161,6 +161,12 @@ let mobs: Mob[] = [];
 let allEvents: LogEventView[] = [];
 const questsDone = new Set<string>();
 const player: Player = { x: 0, y: 0, px: 0, py: 0, dx: 0, dy: 1, moving: false, frame: 0 };
+
+/** Vertical layer the hero stands on: 0 ちじょう, +1 こうか/おくじょう, -1 ちかどう.
+ * Purely presentation — like walking, it moves no world state. */
+let layerZ: 0 | 1 | -1 = 0;
+const ELEVATED_TILES: ReadonlySet<Tile> = new Set([Tile.RailElevated, Tile.RoadElevated, Tile.TowerTop]);
+let subwayCells: ReadonlySet<number> = new Set();
 const held = new Set<string>();
 const SPEED = 3.2; // px per frame at 60fps-ish
 
@@ -182,10 +188,29 @@ function walkable(x: number, y: number): boolean {
   return !!map && !isSolid(map, x, y) && !occupied(x, y);
 }
 
+/** The hero's layer-aware step rule; NPCs always use ground rules (walkable). */
+function heroWalkable(x: number, y: number): boolean {
+  if (!map) return false;
+  if (layerZ === 1) return ELEVATED_TILES.has(tileAt(map, x, y));
+  if (layerZ === -1) return subwayCells.has(y * MAP_W + x);
+  return walkable(x, y);
+}
+
 async function refreshWorld(repositionHero: boolean): Promise<void> {
   const snap = await fetchWorld();
   snapshot = snap;
   map = buildMap(snap);
+  {
+    const cells = new Set<number>();
+    for (const line of map.subways) for (const [cx, cy] of line) cells.add(cy * MAP_W + cx);
+    for (const v of map.villages) {
+      if (!v.station) continue;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) cells.add((v.station[1] + dy) * MAP_W + (v.station[0] + dx));
+    }
+    subwayCells = cells;
+    if (layerZ === 1 && !ELEVATED_TILES.has(tileAt(map, player.x, player.y))) layerZ = 0;
+    if (layerZ === -1 && !subwayCells.has(player.y * MAP_W + player.x)) layerZ = 0;
+  }
   mobs = placeNpcs(snap, map).map((p) => ({
     agent: p.agent,
     x: p.x,
@@ -960,6 +985,7 @@ function airportMenu(village: Village): void {
       if (rid === "cancel") return ui.clear();
       const dest = map?.villages.find((v) => v.regionId === rid);
       if (dest) {
+        layerZ = 0;
         player.x = dest.gate[0];
         player.y = dest.gate[1] + 1;
         player.px = player.x * CELL;
@@ -985,11 +1011,26 @@ function stationMenu(village: Village): void {
   ui.push(
     new Menu(`${village.displayName}えき — どこへ いく?`, [
       ...destinations.map((v) => ({ label: `${v.displayName} (${BIOME_JA[v.biome]})`, value: v.regionId })),
+      { label: "ちかつうろに おりる", value: "subway" },
       { label: "やめる", value: "cancel" },
     ], (rid) => {
       if (rid === "cancel") return ui.clear();
+      if (rid === "subway") {
+        const st = village.station;
+        if (st) {
+          layerZ = -1;
+          player.x = st[0];
+          player.y = st[1];
+          player.px = st[0] * CELL;
+          player.py = st[1] * CELL;
+          se("confirm");
+          log.push("ちかつうろに おりた。せんろぞいに となりまちまで あるける。");
+        }
+        return ui.clear();
+      }
       const dest = map?.villages.find((v) => v.regionId === rid);
       if (dest) {
+        layerZ = 0;
         player.x = dest.gate[0];
         player.y = dest.gate[1] + 1;
         player.px = player.x * CELL;
@@ -1111,6 +1152,40 @@ function interact(): void {
   if (!map || !snapshot) return;
   const fx = player.x + player.dx;
   const fy = player.y + player.dy;
+  if (layerZ === 1) {
+    // From up here the only interaction is coming down where the ground is open.
+    const below = tileAt(map, fx, fy);
+    if (!ELEVATED_TILES.has(below) && !isSolid(map, fx, fy)) {
+      layerZ = 0;
+      player.x = fx;
+      player.y = fy;
+      player.px = fx * CELL;
+      player.py = fy * CELL;
+      se("confirm");
+      log.push("ちじょうに おりた。");
+    } else {
+      log.push("ここからは おりられない。ふちを さがそう。");
+    }
+    return;
+  }
+  if (layerZ === -1) {
+    const near = map.villages.find((v) => v.station && Math.abs(v.station[0] - player.x) <= 1 && Math.abs(v.station[1] - player.y) <= 1);
+    if (near?.station) {
+      layerZ = 0;
+      const gx = near.station[0];
+      const gy = near.station[1] + 1;
+      const spot: readonly [number, number] = !isSolid(map, gx, gy) ? [gx, gy] : [near.gate[0], near.gate[1] + 1];
+      player.x = spot[0];
+      player.y = spot[1];
+      player.px = spot[0] * CELL;
+      player.py = spot[1] * CELL;
+      se("confirm");
+      log.push(`${near.displayName}えきから ちじょうに あがった。`);
+    } else {
+      log.push("のぼりかいだんは えきの ちかにある。あかりを めざそう。");
+    }
+    return;
+  }
   const mob = mobs.find((m) => m.x === fx && m.y === fy);
   if (mob) return npcMenu(mob);
   const critter = critters.find((c) => c.x === fx && c.y === fy);
@@ -1131,6 +1206,51 @@ function interact(): void {
     return;
   }
   const tile = tileAt(map, fx, fy);
+  if (tile === Tile.RailElevated || tile === Tile.RoadElevated) {
+    ui.push(
+      new Menu("こうかせんが あたまの うえを はしっている。", [
+        { label: "はしらを のぼる", value: "up" },
+        { label: "やめる", value: "cancel" },
+      ], (v) => {
+        if (v === "up") {
+          layerZ = 1;
+          player.x = fx;
+          player.y = fy;
+          player.px = fx * CELL;
+          player.py = fy * CELL;
+          se("confirm");
+          log.push("こうかに のぼった! ふちで Enterを おすと おりられる。");
+        }
+        ui.clear();
+      }, () => ui.clear()),
+    );
+    return;
+  }
+  if (tile === Tile.TowerWall || tile === Tile.TowerGlass) {
+    let ty = fy;
+    while (ty > 0 && (tileAt(map, fx, ty) === Tile.TowerWall || tileAt(map, fx, ty) === Tile.TowerGlass)) ty--;
+    if (tileAt(map, fx, ty) === Tile.TowerTop) {
+      const roofY = ty;
+      ui.push(
+        new Menu("ちょうこうそうビルの エレベーターだ。", [
+          { label: "おくじょうへ あがる", value: "up" },
+          { label: "やめる", value: "cancel" },
+        ], (v) => {
+          if (v === "up") {
+            layerZ = 1;
+            player.x = fx;
+            player.y = roofY;
+            player.px = fx * CELL;
+            player.py = roofY * CELL;
+            se("fanfare");
+            log.push("おくじょうに でた! まちが いちぼうできる。");
+          }
+          ui.clear();
+        }, () => ui.clear()),
+      );
+      return;
+    }
+  }
   if (tile === Tile.Sign) {
     const village = map.villages.find((v) => v.sign[0] === fx && v.sign[1] === fy);
     if (village) return signMenu(village);
@@ -1470,7 +1590,7 @@ function tryStep(dx: number, dy: number): void {
   player.dy = dy;
   const nx = player.x + dx;
   const ny = player.y + dy;
-  if (walkable(nx, ny)) {
+  if (heroWalkable(nx, ny)) {
     player.x = nx;
     player.y = ny;
     player.moving = true;
@@ -1678,6 +1798,83 @@ function replyLine(mob: Mob): string {
   return pick2(pool);
 }
 
+/** Trains shuttle along the rails, back and forth. `lift` raises them for the elevated view. */
+function drawTrains(camX: number, camY: number, lift: number): void {
+  if (!ctx || !map) return;
+  for (const rail of map.rails) {
+    if (rail.length < 4) continue;
+    const span = rail.length - 1;
+    const t = Math.floor(performance.now() / 130) % (span * 2);
+    const head = t <= span ? t : span * 2 - t;
+    for (let car = 0; car < 3; car++) {
+      const idx = Math.max(0, Math.min(span, head + (t <= span ? -car : car)));
+      const pt = rail[idx];
+      if (!pt) continue;
+      const px = pt[0] * CELL - camX + 6;
+      const py = pt[1] * CELL - camY + 10 - lift;
+      ctx.fillStyle = car === 0 ? "#c23a2e" : "#e8e8e8";
+      ctx.fillRect(px, py, 36, 24);
+      ctx.fillStyle = "#2a3a55";
+      ctx.fillRect(px + 5, py + 5, 10, 8);
+      ctx.fillRect(px + 21, py + 5, 10, 8);
+    }
+  }
+}
+
+/** The vertical world: redraw only what exists on the hero's current layer,
+ * floating above a dimmed ground (こうか) or in lamp-lit darkness (ちかどう). */
+function renderLayer(camX: number, camY: number, w: number, h: number): void {
+  if (!ctx || !map) return;
+  const x0 = Math.floor(camX / CELL);
+  const y0 = Math.floor(camY / CELL);
+  ctx.fillStyle = layerZ === 1 ? "rgba(6, 10, 22, 0.5)" : "rgba(0, 0, 6, 0.92)";
+  ctx.fillRect(0, 0, w, h);
+  const lift = layerZ === 1 ? 8 : 0;
+  for (let y = y0; y <= y0 + Math.ceil(h / CELL); y++) {
+    for (let x = x0; x <= x0 + Math.ceil(w / CELL); x++) {
+      if (layerZ === 1) {
+        const t = tileAt(map, x, y);
+        if (!ELEVATED_TILES.has(t)) continue;
+        const sp = sprites.tiles.get(t);
+        if (sp) ctx.drawImage(sp, x * CELL - camX, y * CELL - camY - lift);
+      } else {
+        if (!subwayCells.has(y * MAP_W + x)) continue;
+        const t = tileAt(map, x, y);
+        const sp = sprites.tiles.get(t === Tile.Rail || t === Tile.Station ? Tile.Rail : Tile.Pavement);
+        if (sp) {
+          ctx.globalAlpha = 0.8;
+          ctx.drawImage(sp, x * CELL - camX, y * CELL - camY);
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+  }
+  if (layerZ === -1) {
+    for (const v of map.villages) {
+      if (!v.station) continue;
+      const px = v.station[0] * CELL - camX + CELL / 2;
+      const py = v.station[1] * CELL - camY + CELL / 2;
+      const grad = ctx.createRadialGradient(px, py, 4, px, py, CELL * 2.5);
+      grad.addColorStop(0, "rgba(255, 220, 140, 0.55)");
+      grad.addColorStop(1, "rgba(255, 220, 140, 0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(px - CELL * 2.5, py - CELL * 2.5, CELL * 5, CELL * 5);
+      drawText(ctx, `${v.displayName}えき`, v.station[0] * CELL - camX - 8, v.station[1] * CELL - camY - 20, "#ffd75e");
+    }
+  }
+  drawTrains(camX, camY, layerZ === 1 ? 8 : 0);
+  const heroPair = sprites.heroFor(titleTier(title));
+  if (layerZ === 1) {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+    ctx.beginPath();
+    ctx.ellipse(player.px - camX + CELL / 2, player.py - camY + CELL - 2, 10, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.drawImage(heroPair[player.frame === 0 ? 0 : 1], player.px - camX, player.py - camY - lift);
+  const label = layerZ === 1 ? "― こうか ―  (ふちで Enter: おりる)" : "― ちかどう ―  (えきで Enter: あがる)";
+  drawText(ctx, label, 16, h - 96, "#8fd0ff");
+}
+
 function render(): void {
   if (!ctx) return;
   ctx.textBaseline = "top";
@@ -1833,25 +2030,7 @@ function render(): void {
     ctx.fillRect(px + 30, py + 2, 12, 12);
   }
 
-  // Trains shuttle along the rails, back and forth.
-  for (const rail of map.rails) {
-    if (rail.length < 4) continue;
-    const span = rail.length - 1;
-    const t = Math.floor(performance.now() / 130) % (span * 2);
-    const head = t <= span ? t : span * 2 - t;
-    for (let car = 0; car < 3; car++) {
-      const idx = Math.max(0, Math.min(span, head + (t <= span ? -car : car)));
-      const pt = rail[idx];
-      if (!pt) continue;
-      const px = pt[0] * CELL - camX + 6;
-      const py = pt[1] * CELL - camY + 10;
-      ctx.fillStyle = car === 0 ? "#c23a2e" : "#e8e8e8";
-      ctx.fillRect(px, py, 36, 24);
-      ctx.fillStyle = "#2a3a55";
-      ctx.fillRect(px + 5, py + 5, 10, 8);
-      ctx.fillRect(px + 21, py + 5, 10, 8);
-    }
-  }
+  drawTrains(camX, camY, 0);
 
   // Transmission lines hum between plants and substations, pylons in step.
   for (const [a, b] of map.powerLines) {
@@ -1950,6 +2129,8 @@ function render(): void {
     }
     ctx.globalCompositeOperation = "source-over";
   }
+
+  if (layerZ !== 0) renderLayer(camX, camY, w, h);
 
   // HUD
   const hero = heroAgent();
