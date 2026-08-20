@@ -291,6 +291,25 @@ const STATION = [
   "gggggggggggggggg",
 ];
 
+const POSTER = [
+  "gggggggggggggggg",
+  "ggxxxxxxxxxxxxgg",
+  "ggxeeeeeeeeeexgg",
+  "ggxereeeeeerexgg",
+  "ggxeeexxxxeeexgg",
+  "ggxeexkkkkxeexgg",
+  "ggxeexkxxkxeexgg",
+  "ggxeexkkkkxeexgg",
+  "ggxeeexxxxeeexgg",
+  "ggxereeeeeerexgg",
+  "ggxexxexxexxexgg",
+  "ggxeeeeeeeeeexgg",
+  "ggxxxxxxxxxxxxgg",
+  "gggggggbbgggggggg".slice(0, 16),
+  "ggggggbbbbgggggg",
+  "gggggggggggggggg",
+];
+
 const STALL = [
   "gggggggggggggggg",
   "gxRRRReeeeRRRRxg",
@@ -554,6 +573,7 @@ export function buildSprites(): SpriteSet {
     [Tile.BuildingWall, draw(BUILDING_WALL)],
     [Tile.BuildingRoof, draw(BUILDING_ROOF)],
     [Tile.Station, draw(STATION)],
+    [Tile.Poster, draw(POSTER)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();

@@ -68,3 +68,14 @@ export function classifyRegime(gov: GovernanceValue): Regime {
   if (members.length <= 2) return "oligarchy";
   return "republic";
 }
+
+/** Flag colors: every constitution flies its own banner over the town hall. */
+export const REGIME_COLOR: Readonly<Record<Regime, string>> = {
+  dictatorship: "#c23a2e",
+  oligarchy: "#7a3fa8",
+  republic: "#2a5fd0",
+  democracy: "#2fa84f",
+  meritocracy: "#e8c840",
+  plutocracy: "#e07820",
+  consensus: "#e8e8e8",
+};

@@ -55,6 +55,7 @@ export const enum Tile {
   BuildingWall = 37,
   BuildingRoof = 38,
   Station = 39,
+  Poster = 40,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -89,6 +90,7 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.BuildingWall,
   Tile.BuildingRoof,
   Tile.Station,
+  Tile.Poster,
 ]);
 
 /** Village slot origins (top-left), a 5x6 lattice spaced for the largest plot (20x15). */
@@ -113,6 +115,8 @@ export interface Village {
   /** The gate tile in the south fence; the hero spawns just inside it. */
   readonly gate: readonly [number, number];
   readonly sign: readonly [number, number];
+  /** The notice board by the gate — wanted posters and town gossip. */
+  readonly poster: readonly [number, number];
   readonly chest: readonly [number, number];
   /** The item shop's market stall. */
   readonly stall: readonly [number, number];
@@ -426,6 +430,16 @@ function carveVillage(
   if (!isFree(sign[0], sign[1])) sign = [gx + 2, vy + h - 2] as const;
   set(tiles, sign[0], sign[1], Tile.Sign);
 
+  // The notice board, pinned near the signboard.
+  let poster: readonly [number, number] = [sign[0] - 1, sign[1]];
+  if (!isFree(poster[0], poster[1])) {
+    poster = [sign[0] + 1, sign[1]] as const;
+    for (let tries = 0; !isFree(poster[0], poster[1]) && tries < 20; tries++) {
+      poster = [vx + 2 + Math.floor(rng() * (w - 4)), vy + h - 3] as const;
+    }
+  }
+  set(tiles, poster[0], poster[1], Tile.Poster);
+
   // The item shop's stall, on a free cell near the gate (opposite side from the sign).
   let stall: readonly [number, number] = [gx > vx + 3 ? gx + 2 : gx - 2, vy + h - 3];
   if (!isFree(stall[0], stall[1])) {
@@ -492,7 +506,7 @@ function carveVillage(
     set(tiles, station[0] + 1, station[1], Tile.Pavement);
   }
 
-  return { x: vx, y: vy, w, h, biome, tier, station, gate: [gx, vy + h - 1] as const, sign, chest, stall, hall, mint, court, spots };
+  return { x: vx, y: vy, w, h, biome, tier, station, gate: [gx, vy + h - 1] as const, sign, poster, chest, stall, hall, mint, court, spots };
 }
 
 export function buildMap(snapshot: Snapshot): WorldMap {

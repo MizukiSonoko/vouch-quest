@@ -61,11 +61,12 @@ const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)] as T
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const say = (who: string, msg: string, res?: unknown) => console.log(`[${who}] ${msg}${res !== undefined ? ` ${JSON.stringify(res)}` : ""}`);
 
-type Name = "Momo" | "Kaji" | "Gin" | "Sora" | "Toshi" | "Zai" | "Ginko" | "Kuro";
-const TROUPE: readonly Name[] = ["Momo", "Kaji", "Gin", "Sora", "Toshi", "Zai", "Ginko", "Kuro"];
+type Name = "Momo" | "Kaji" | "Gin" | "Sora" | "Toshi" | "Zai" | "Ginko" | "Kuro" | "Yoru" | "Hikari";
+const TROUPE: readonly Name[] = ["Momo", "Kaji", "Gin", "Sora", "Toshi", "Zai", "Ginko", "Kuro", "Yoru", "Hikari"];
 const ROLES: Record<Name, "artisan" | "merchant" | "broker"> = {
   Momo: "merchant", Kaji: "artisan", Gin: "broker", Sora: "merchant",
   Toshi: "broker", Zai: "merchant", Ginko: "broker", Kuro: "merchant",
+  Yoru: "merchant", Hikari: "broker",
 };
 const SETTLERS = ["Hana", "Taro", "Suzu", "Gonta", "Mimi", "Roku", "Chiyo", "Bunta", "Kiku", "Nobu", "Ume", "Sen", "Rin", "Kota", "Yuki", "Asa", "Fuku", "Tetsu", "Nana", "Goro"];
 const WARES = ["bread", "fish", "lantern", "rope", "boots", "tea", "brick", "gear"];
@@ -281,7 +282,7 @@ async function act(name: Name): Promise<void> {
           const residents = agents.filter((a) => a.region === town.id && a.role !== "treasury").length;
           const fresh = SETTLERS.filter((n) => !agents.some((a) => a.id === `${n}@${town.id}`)).slice(0, 2);
           for (const f of fresh) {
-            if (residents >= 14) break;
+            if (residents >= 20) break;
             say(name, `hires ${f} for ${town.id}`, await client.admit(name, `${f}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 45));
             await sleep(1300);
           }
@@ -316,7 +317,7 @@ async function act(name: Name): Promise<void> {
         const residents = agents.filter((a) => a.region === town.id && a.role !== "treasury").length;
         const fresh = SETTLERS.filter((n) => !agents.some((a) => a.id === `${n}@${town.id}`)).slice(0, 2);
         for (const f of fresh) {
-          if (residents >= 14) break;
+          if (residents >= 20) break;
           say(name, `invites ${f} to ${town.id}`, await client.admit(name, `${f}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 40));
           await sleep(1300);
         }
@@ -341,6 +342,6 @@ async function act(name: Name): Promise<void> {
   }
 }
 
-const awake = [...TROUPE].sort(() => rand() - 0.5).slice(0, 3 + Math.floor(rand() * 2));
+const awake = [...TROUPE].sort(() => rand() - 0.5).slice(0, 4 + Math.floor(rand() * 2));
 console.log(`awake: ${awake.join(", ")}`);
 for (const p of awake) await act(p);

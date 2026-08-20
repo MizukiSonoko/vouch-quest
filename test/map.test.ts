@@ -95,6 +95,7 @@ describe("buildMap", () => {
     const map = buildMap(snapshot);
     for (const v of map.villages) {
       expect(tileAt(map, v.sign[0], v.sign[1])).toBe(Tile.Sign);
+      expect(tileAt(map, v.poster[0], v.poster[1])).toBe(Tile.Poster);
       expect(tileAt(map, v.chest[0], v.chest[1])).toBe(Tile.Chest);
       expect(tileAt(map, v.hall[0], v.hall[1])).toBe(Tile.HallDoor);
       expect(tileAt(map, v.mint[0], v.mint[1])).toBe(Tile.MintDoor);

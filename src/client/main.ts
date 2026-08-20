@@ -10,7 +10,7 @@ import { npcLines } from "./dialogue";
 import { eventToMessage } from "./feed";
 import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, type WorldMap } from "./map";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
-import { classifyRegime, type GovernanceValue, REGIME_JA, REGIMES } from "./politics";
+import { classifyRegime, type GovernanceValue, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
 import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
 import { canShopHere, CATALOG, kindName, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
 import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
@@ -198,7 +198,15 @@ function celebrate(): void {
         banner = { text: eventToMessage(e), until: now + 3200 };
         break;
       }
-      case "region.institution.changed":
+      case "region.institution.changed": {
+        const at = villageCenterPx(pick(p, "regionId"));
+        const isConstitution = ((p as Record<string, unknown>)["change"] as Record<string, unknown> | undefined)?.["policy"] === "governance";
+        if (at && isConstitution) particles.firework(at[0], at[1]);
+        else if (at) particles.sparkle(at[0], at[1], "#8fd0ff");
+        banner = { text: eventToMessage(e), until: now + (isConstitution ? 4200 : 3200) };
+        if (isConstitution) se("fanfare");
+        break;
+      }
       case "gov.proposal.opened":
       case "gov.vote.cast": {
         const at = villageCenterPx(pick(p, "regionId"));
@@ -568,6 +576,50 @@ function diplomacyMenu(ctx2: VillageContext): void {
   );
 }
 
+const JUNK_KINDS = new Set(["kuzutetsu", "nisegane", "garakuta"]);
+
+/** けいじばん — town notices, including the wanted poster earned by real crimes. */
+function posterMenu(village: Village): void {
+  let junk = 0;
+  let borrowed = 0;
+  let repaid = 0;
+  let wantedName: string | null = null;
+  for (const e of allEvents) {
+    const p = e.payload;
+    if (e.type === "item.minted") {
+      const owner = typeof p["owner"] === "string" ? (p["owner"] as string) : "";
+      const kind = typeof p["kind"] === "string" ? (p["kind"] as string) : "";
+      if (owner.startsWith("Kuro@") && JUNK_KINDS.has(kind)) {
+        junk++;
+        wantedName = "Kuro";
+      }
+    } else if (e.type === "economy.settled") {
+      const entries = (p["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+      const bank = entries.find((x) => x.agentId?.startsWith("Ginko@"));
+      const kuro = entries.find((x) => x.agentId?.startsWith("Kuro@"));
+      if (bank && kuro && typeof bank.currencyDelta === "number") {
+        if (bank.currencyDelta < 0) borrowed += -bank.currencyDelta;
+        else repaid += bank.currencyDelta;
+      }
+    }
+  }
+  const debt = borrowed - repaid;
+  if (!wantedName && debt <= 0) {
+    ui.push(new Info("けいじばん", ["「へいわな ひびが つづいて います」", "「おちましもの は やくばへ」"], () => ui.pop()));
+    return;
+  }
+  const kuroAgent = snapshot?.agents.find((a) => a.id.startsWith("Kuro@"));
+  ui.push(
+    new Info("しめいてはい", [
+      "★ テハイ ★  Kuro",
+      `つみ: がらくたの らんぞう (${junk}けん)`,
+      debt > 0 ? `つみ: ぎんこうへの ふみたおし (${debt}G)` : "ぎんこうへの かりは かえした もよう",
+      kuroAgent ? `もくげきじょうほう: ${kuroAgent.region} ちほう` : "ゆくえ ふめい",
+      "みつけたら むらの おきてを しめる べし。",
+    ], () => ui.pop()),
+  );
+}
+
 /** 駅 — ride the train between cities (movement is presentation; no world state moves). */
 function stationMenu(village: Village): void {
   const destinations = (map?.villages ?? []).filter((v) => v.station && v.regionId !== village.regionId);
@@ -721,6 +773,10 @@ function interact(): void {
   if (tile === Tile.Stall) {
     const village = map.villages.find((v) => v.stall[0] === fx && v.stall[1] === fy);
     if (village) return shopMenu(village);
+  }
+  if (tile === Tile.Poster) {
+    const village = map.villages.find((v) => v.poster[0] === fx && v.poster[1] === fy);
+    if (village) return posterMenu(village);
   }
   if (tile === Tile.Station) {
     const village = map.villages.find((v) => v.station && v.station[0] === fx && v.station[1] === fy);
@@ -1082,6 +1138,21 @@ function render(): void {
     label("やくば", village.hall);
     label("ぞうへい", village.mint);
     label("さいばん", village.court);
+    // The constitution flies over the town hall as a colored flag.
+    const gov = snapshot.regions.find((r) => r.id === village.regionId)?.institutions.governance;
+    if (gov) {
+      const regime = classifyRegime(gov as GovernanceValue);
+      const fpx = village.hall[0] * CELL - camX + CELL + 8;
+      const fpy = (village.hall[1] - 2) * CELL - camY;
+      ctx.fillStyle = "#5b3a1e";
+      ctx.fillRect(fpx, fpy - 6, 4, 44);
+      ctx.fillStyle = REGIME_COLOR[regime];
+      const wave = Math.floor(performance.now() / 300) % 2 === 0 ? 0 : 2;
+      ctx.fillRect(fpx + 4, fpy - 6 + wave, 26, 14);
+      ctx.font = '12px "DotGothic16", monospace';
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(REGIME_JA[regime].label, fpx - 10, fpy + 50);
+    }
     // 関所ばた: this village's diplomatic stance toward the hero's home village.
     const myHome = snapshot.me.agentId?.split("@")[1];
     const region = snapshot.regions.find((r) => r.id === village.regionId);
@@ -1195,6 +1266,28 @@ function render(): void {
     ctx.fillText(tickerText, labelW + tickerX, 21);
     ctx.fillText(tickerText, labelW + tickerX + textW, 21);
     ctx.restore();
+  }
+
+  // かいひょうそくほう — a live tally board while any proposal is open.
+  const polling = snapshot.regions.filter((r) => r.openProposal);
+  if (polling.length > 0 && !ui.active) {
+    const r = polling[Math.floor(performance.now() / 4000) % polling.length];
+    if (r?.openProposal) {
+      const gov = r.institutions.governance as GovernanceValue;
+      const need = gov.kind === "council" ? (gov.threshold ?? 1) : 1;
+      const got = r.openProposal.votes.length;
+      ctx.font = '15px "DotGothic16", monospace';
+      const text = `かいひょうそくほう ${r.displayName}: さんせい ${got} / ひつよう ${need}`;
+      const bw2 = ctx.measureText(text).width + 40;
+      const bx2 = (w - bw2) / 2;
+      drawWindow(ctx, bx2, 36, bw2, 66);
+      ctx.fillStyle = "#ffd75e";
+      ctx.fillText(text, bx2 + 20, 58);
+      ctx.fillStyle = "#223";
+      ctx.fillRect(bx2 + 20, 78, bw2 - 40, 10);
+      ctx.fillStyle = "#2fa84f";
+      ctx.fillRect(bx2 + 20, 78, (bw2 - 40) * Math.min(1, got / Math.max(1, need)), 10);
+    }
   }
 
   // つぎのもくひょう — so there is always a reason to take the next step.
