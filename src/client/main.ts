@@ -440,6 +440,12 @@ function rebuildTicker(): void {
 
 // Headlines the genome daemon wrote — sprinkled into the かわらばん rotation.
 let genomeHeadlines: readonly string[] = [];
+/** Genome professions by romaji name — the LLM-born trades, looked up per NPC. */
+let genomeProfs: ReadonlyMap<string, { craft: string; greeting: string }> = new Map();
+
+function genomeProfOf(agentId: string): { craft: string; greeting: string } | null {
+  return genomeProfs.get((agentId.split("@")[0] ?? "").replace(/\d+$/, "")) ?? null;
+}
 
 let title = "かけだしの たびびと";
 
@@ -504,6 +510,7 @@ function npcMenu(mob: Mob): void {
           const owner = snapshot?.regions.find((r) => r.id === a.region)?.owner ?? null;
           ui.push(
             new Info(a.id, [
+              ...(genomeProfOf(a.id) ? [`「${genomeProfOf(a.id)?.greeting ?? ""}」`] : []),
               ...npcLines(
                 a,
                 snapshot?.items ?? [],
@@ -519,7 +526,7 @@ function npcMenu(mob: Mob): void {
                 },
               ),
               "",
-              `しょくぎょう: ${roleJa(a.role)}`,
+              `しょくぎょう: ${genomeProfOf(a.id) ? `${kindName(genomeProfOf(a.id)?.craft ?? "")}づくりの ${roleJa(a.role)} ★しんかのたみ` : roleJa(a.role)}`,
               `しょじきん: ${a.balances.currency}G  くれじっと: ${a.balances.credit}`,
               `ひょうばん: ${a.reputation}  しんらい: ${a.trust}`,
               `すんでいるむら: ${a.region}`,
@@ -1982,6 +1989,20 @@ function render(): void {
     if (performance.now() < mob.hiddenUntil) continue; // indoors
     const pair = sprites.roles[mob.agent.role] ?? sprites.roles["artisan"];
     if (pair) ctx.drawImage(pair[mob.frame === 0 ? 0 : 1], mob.px - camX, mob.py - camY);
+    if (genomeProfOf(mob.agent.id)) {
+      const bob = Math.sin(performance.now() / 300 + mob.px) * 2;
+      ctx.fillStyle = "#ffd75e";
+      const mx = mob.px - camX + CELL / 2;
+      const my = mob.py - camY - 8 + bob;
+      ctx.beginPath();
+      for (let k = 0; k < 10; k++) {
+        const ang = (Math.PI / 5) * k - Math.PI / 2;
+        const rr = k % 2 === 0 ? 5 : 2.2;
+        ctx.lineTo(mx + Math.cos(ang) * rr, my + Math.sin(ang) * rr);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
   }
   ctx.font = '13px "DotGothic16", monospace';
   for (const mob of mobs) {
@@ -2289,6 +2310,7 @@ void loadGenome().then((g) => {
   registerChatter(g.chatter);
   registerWares(g.wares);
   genomeHeadlines = g.headlines;
+  genomeProfs = new Map(g.professions.map((pr) => [pr.name, { craft: pr.craft, greeting: pr.greeting }]));
   const grown = Object.keys(g.vocab).length + g.wares.length + g.professions.length;
   if (grown > 0) log.push(`せかいの ことばが しんかしている… (ゲノム v${g.version})`);
 });
