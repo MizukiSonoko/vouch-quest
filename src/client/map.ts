@@ -10,10 +10,10 @@ import { friendlyPairs } from "./shop";
 
 export const MAP_W = 240;
 export const MAP_H = 160;
-export const MIN_PLOT_W = 16;
-export const MAX_PLOT_W = 20;
-export const MIN_PLOT_H = 12;
-export const MAX_PLOT_H = 15;
+export const MIN_PLOT_W = 14;
+export const MAX_PLOT_W = 34;
+export const MIN_PLOT_H = 11;
+export const MAX_PLOT_H = 19;
 
 export const enum Tile {
   Grass = 0,
@@ -265,8 +265,10 @@ function carveVillage(
   const rng = villageRng(regionId);
   const slot = SLOTS[slotIndex % SLOTS.length] ?? SLOTS[0]!;
   const [vx, vy] = slot;
-  const w = MIN_PLOT_W + Math.floor(rng() * (MAX_PLOT_W - MIN_PLOT_W + 1));
-  const h = MIN_PLOT_H + Math.floor(rng() * (MAX_PLOT_H - MIN_PLOT_H + 1));
+  // Territory grows with the settlement: population and development push the
+  // fence outward, from a hamlet's clearing to a city's sprawl.
+  const w = Math.max(MIN_PLOT_W, Math.min(MAX_PLOT_W, 14 + residents + tier * 3 + Math.floor(rng() * 3)));
+  const h = Math.max(MIN_PLOT_H, Math.min(MAX_PLOT_H, 10 + Math.floor(residents / 2) + tier * 2 + Math.floor(rng() * 3)));
   const biome = biomeAt(vx + Math.floor(w / 2), vy + Math.floor(h / 2));
   // A full city paves over its biome; towns and villages keep the local ground.
   const [g1, g2] = tier >= 2 ? ([Tile.Pavement, Tile.Pavement] as const) : biomeGround(biome);
@@ -363,10 +365,13 @@ function carveVillage(
     return { door: [doorX, doorY] as const, cells };
   };
 
-  const overlapsProtected = (bx: number, by: number, bw: number, bh: number): boolean => {
+  const overlapsProtected = (bx: number, by: number, bw: number, bh: number, relax: 0 | 1 | 2 = 0): boolean => {
     for (let y = by; y < by + bh + 1; y++) {
       for (let x = bx; x < bx + bw; x++) {
-        if (!inside(x, y) || protectedCells.has(key(x, y))) return true;
+        if (protectedCells.has(key(x, y))) return true;
+        if (relax === 0 && !inside(x, y)) return true;
+        if (relax === 1 && !inCells(x, y)) return true;
+        if (relax === 2 && (x <= vx || x >= vx + w - 1 || y <= vy || y >= vy + h - 2)) return true;
       }
     }
     return false;
@@ -387,29 +392,37 @@ function carveVillage(
     shuffled[j] = a;
   }
   const doors: Partial<Record<"hall" | "mint" | "court", readonly [number, number]>> = {};
-  shuffled.forEach(([kind, roof, door], i) => {
+  shuffled.forEach(([kind, roof, door]) => {
     const roofRows = 2;
-    const wallRows = kind === "hall" ? 2 : 1;
+    const wallRows = kind === "hall" && w >= 20 ? 2 : 1;
     const bh = roofRows + wallRows;
-    let placed = false;
-    for (let tries = 0; tries < 60 && !placed; tries++) {
-      const bx = vx + 1 + Math.floor(rng() * (w - 4));
-      const by = vy + 1 + Math.floor(rng() * Math.max(1, h - bh - 4));
-      if (overlapsProtected(bx, by, 3, bh)) continue;
+    const place = (bx: number, by: number): void => {
       const built = drawBuilding(bx, by, 3, roofRows, wallRows, { roof, wall: Tile.HouseWall, door, window: Tile.WallWindow });
       for (const [cx, cy] of built.cells) protectedCells.add(key(cx, cy));
       protectedCells.add(key(built.door[0], built.door[1] + 1));
       set(tiles, built.door[0], built.door[1] + 1, g1);
       doors[kind] = built.door;
+    };
+    let placed = false;
+    for (let tries = 0; tries < 120 && !placed; tries++) {
+      const bx = vx + 1 + Math.floor(rng() * (w - 4));
+      const by = vy + 1 + Math.floor(rng() * Math.max(1, h - bh - 4));
+      if (overlapsProtected(bx, by, 3, bh)) continue;
+      place(bx, by);
       placed = true;
     }
-    if (!placed) {
-      // Crowded corner case: fall back to a fixed spot along the top.
-      const bx = vx + 1 + i * 5;
-      const built = drawBuilding(bx, vy + 1, 3, roofRows, wallRows, { roof, wall: Tile.HouseWall, door, window: Tile.WallWindow });
-      for (const [cx, cy] of built.cells) protectedCells.add(key(cx, cy));
-      protectedCells.add(key(built.door[0], built.door[1] + 1));
-      doors[kind] = built.door;
+    // Cramped blob: sweep every position, relaxing the terrain requirement in
+    // stages (interior → within the fence line → anywhere on the plot), but
+    // never overwriting another protected structure.
+    for (const relax of [0, 1, 2] as const) {
+      if (placed) break;
+      for (let by = vy + 1; by <= vy + h - bh - 3 && !placed; by++) {
+        for (let bx = vx + 1; bx <= vx + w - 4 && !placed; bx++) {
+          if (overlapsProtected(bx, by, 3, bh, relax)) continue;
+          place(bx, by);
+          placed = true;
+        }
+      }
     }
   });
   const hall = doors.hall ?? ([vx + 2, vy + 3] as const);
@@ -429,6 +442,16 @@ function carveVillage(
       set(tiles, built.door[0], built.door[1] + 1, g1);
       hospital = built.door;
     }
+    for (let by = vy + 1; by <= vy + h - 5 && !hospital; by++) {
+      for (let bx = vx + 1; bx <= vx + w - 4 && !hospital; bx++) {
+        if (overlapsProtected(bx, by, 3, 3)) continue;
+        const built = drawBuilding(bx, by, 3, 2, 1, { roof: Tile.HospitalRoof, wall: Tile.HouseWall, door: Tile.HospitalDoor, window: Tile.WallWindow });
+        for (const [cx2, cy2] of built.cells) protectedCells.add(key(cx2, cy2));
+        protectedCells.add(key(built.door[0], built.door[1] + 1));
+        set(tiles, built.door[0], built.door[1] + 1, g1);
+        hospital = built.door;
+      }
+    }
     if (!hospital) {
       // The blob was too cramped for a clean fit: build it beside the hall anyway.
       const bx = Math.max(vx + 1, Math.min(hall[0] + 2, vx + w - 4));
@@ -445,13 +468,13 @@ function carveVillage(
   // emerge. A door swallowed by a later extension just means the family built on.
   const ROOFS: readonly Tile[] = [Tile.HouseRoof, Tile.RoofGreen, Tile.RoofBlue, Tile.RoofBrown];
   const houseDoors: { door: readonly [number, number]; tile: Tile }[] = [];
-  const houses = Math.min(Math.max(residents, 1), 12);
+  const houses = Math.min(Math.max(residents, 1), 20);
   for (let i = 0; i < houses; i++) {
     // Cities raise towers; towns get the occasional tall house; villages stay low.
     const tower = tier >= 2 && rng() < 0.55;
-    const bw = tower ? 3 : 2 + Math.floor(rng() * 3);
+    const bw = tower ? 3 + Math.floor(rng() * 2) : 2 + Math.floor(rng() * 4);
     const roofRows = tower ? 1 : rng() < 0.6 ? 2 : 1;
-    const wallRows = tower ? 2 + Math.floor(rng() * 2) + (tier >= 2 ? 1 : 0) : 1;
+    const wallRows = tower ? 3 + Math.floor(rng() * 3) : rng() < 0.2 ? 2 : 1;
     const bh = roofRows + wallRows;
     const roof = tower ? Tile.BuildingRoof : (ROOFS[Math.floor(rng() * ROOFS.length)] ?? Tile.HouseRoof);
     const wood = !tower && rng() < 0.4;
@@ -559,7 +582,7 @@ function carveVillage(
   }
 
   // Extra NPC spots on remaining free cells.
-  for (let tries = 0; spots.length < 18 && tries < 60; tries++) {
+  for (let tries = 0; spots.length < 26 && tries < 90; tries++) {
     const sx = vx + 2 + Math.floor(rng() * (w - 4));
     const sy = vy + 3 + Math.floor(rng() * (h - 5));
     if (isFree(sx, sy)) spots.push([sx, sy] as const);
