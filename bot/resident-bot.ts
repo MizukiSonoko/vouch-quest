@@ -69,7 +69,7 @@ const ROLES: Record<Name, "artisan" | "merchant" | "broker"> = {
   Toshi: "broker", Zai: "merchant", Ginko: "broker", Kuro: "merchant",
   Yoru: "merchant", Hikari: "broker",
 };
-const SETTLERS = ["Hana", "Taro", "Suzu", "Gonta", "Mimi", "Roku", "Chiyo", "Bunta", "Kiku", "Nobu", "Ume", "Sen", "Rin", "Kota", "Yuki", "Asa", "Fuku", "Tetsu", "Nana", "Goro"];
+const SETTLERS = ["Hana", "Taro", "Suzu", "Gonta", "Mimi", "Roku", "Chiyo", "Bunta", "Kiku", "Nobu", "Ume", "Sen", "Rin", "Kota", "Yuki", "Asa", "Fuku", "Tetsu", "Nana", "Goro", "Ine", "Matsu", "Take", "Tsuru", "Kame", "Botan", "Kaede", "Sumire", "Ran", "Fuji", "Hagi", "Kiri"];
 const WARES = ["bread", "fish", "lantern", "rope", "boots", "tea", "brick", "gear"];
 const JUNK = ["kuzutetsu", "nisegane", "garakuta"];
 const TOWNS = ["ichiba", "minato", "kaido", "hoshi", "takumi", "yama", "izumi", "sakura"];
@@ -176,9 +176,9 @@ async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promis
     const taken = new Set(regions.map((r) => r.id));
     const rid = TOWNS.find((t) => !taken.has(t)) ?? `machi${Math.floor(rand() * 900) + 100}`;
     say(name, `founds ${rid}`, await client.found(name, rid, rid.charAt(0).toUpperCase() + rid.slice(1)));
-    await sleep(1200);
+    await sleep(900);
     say(name, "moves in", await client.admit(name, `${name}@${rid}`, rid, ROLES[name], name === "Zai" ? 250 : 120));
-    await sleep(1200);
+    await sleep(900);
     await client.amend(name, rid, { policy: "items", value: { minting: "anyone" } });
     return;
   }
@@ -211,11 +211,11 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
     if (debt > 0 && me.balances.currency > debt + 8) {
       if (bankAgent.region !== me.region) {
         say(name, `travels to ${bankAgent.region} to settle a debt`, await client.migrate(me.id, bankAgent.region));
-        await sleep(1400);
+        await sleep(900);
       } else {
         const repay = Math.ceil(debt * 1.1);
         say(name, `repays ${repay}G (loan+10%) to the bank`, await client.transfer(me.id, bankAgent.id, repay));
-        await sleep(1400);
+        await sleep(900);
       }
     }
   }
@@ -228,7 +228,7 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
     if (goodPayers.length > 0 && rand() < 0.5) {
       const star = pick(goodPayers);
       say(name, `rates ${star.id} creditworthy`, await client.vouch(me.id, star.id, 2));
-      await sleep(1400);
+      await sleep(900);
     }
     const applicants = neighbors.filter((a) => a.balances.currency < 15 && !deadbeats.includes(a.id));
     if (applicants.length > 0 && me.balances.currency > 40) {
@@ -246,7 +246,7 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
     if (kuroHere && town.institutions.itemPolicy.minting === "anyone" && town.institutions.governance.kind === "dictatorship") {
       say(name, `cracks down: minting in ${town.id} is now owner-only (Kuro was caught)`,
         await client.amend(name, town.id, { policy: "items", value: { minting: "owner" } }));
-      await sleep(1400);
+      await sleep(900);
     }
   }
 
@@ -258,7 +258,7 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
     const voted = prop.votes.includes(me.id);
     if (onRoll && !voted && rand() < 0.85) {
       say(name, `votes on the proposal in ${region.id}`, await client.vote(me.id, region.id));
-      await sleep(1400);
+      await sleep(900);
     }
   }
 
@@ -272,7 +272,7 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
         const regime = pick(REGIMES.filter((r) => r !== "dictatorship"));
         say(name, `decrees a new constitution for ${town.id}: ${regime}`,
           await client.amend(name, town.id, { policy: "governance", value: buildGovernance(regime, residents) }));
-        await sleep(1400);
+        await sleep(900);
       }
     }
   } else if (rand() < 0.08) {
@@ -282,18 +282,18 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
       const regime = pick(REGIMES);
       say(name, `proposes a new constitution for ${home.id}: ${regime}`,
         await client.propose(me.id, home.id, { policy: "governance", value: buildGovernance(regime, residents) }));
-      await sleep(1400);
+      await sleep(900);
     }
   }
 
   // Births: where married couples live, the town welcomes children (population grows).
-  if (rand() < 0.35) {
+  if (rand() < 0.6) {
     for (const town of owned) {
       if (town.id === AFTERLIFE) continue;
       const townFolk = agents.filter((a) => a.region === town.id && a.role !== "treasury" && a.region !== AFTERLIFE);
       const couples = townFolk.filter((a) => isMarried(edges, a.id, townFolk)).length / 2;
       const children = townFolk.filter((a) => CHILD_NAMES.includes(bareName(a.id))).length;
-      if (couples >= 1 && children < couples * 2 && townFolk.length < 20) {
+      if (couples >= 1 && children < couples * 3 && townFolk.length < 26) {
         let childName = "";
         for (const base of CHILD_NAMES) {
           for (let n = 0; n < 4; n++) {
@@ -308,14 +308,14 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
         if (childName) {
           say(name, `welcomes baby ${childName} in ${town.id}`,
             await client.admit(name, `${childName}@${town.id}`, town.id, "artisan", 10));
-          await sleep(1400);
+          await sleep(900);
         }
         break;
       }
     }
   }
 
-  const rounds = 1 + Math.floor(rand() * 2);
+  const rounds = 2 + Math.floor(rand() * 2);
   for (let i = 0; i < rounds; i++) {
     const roll = rand();
     try {
@@ -336,9 +336,9 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
           const residents = agents.filter((a) => a.region === town.id && a.role !== "treasury").length;
           const fresh = SETTLERS.filter((n) => !agents.some((a) => a.id === `${n}@${town.id}`)).slice(0, 2);
           for (const f of fresh) {
-            if (residents >= 20) break;
+            if (residents >= 26) break;
             say(name, `hires ${f} for ${town.id}`, await client.admit(name, `${f}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 45));
-            await sleep(1300);
+            await sleep(900);
           }
         } else if (roll < 0.75 && owned.length > 0) {
           const town = pick(owned);
@@ -346,7 +346,7 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
             say(name, `tax reform in ${town.id}: fees down`,
               await client.amend(name, town.id, { policy: "economy", value: { ...town.institutions.economyPolicy, baseCostRate: 0.1 } }));
           }
-        } else if (roll < 0.85 && regions.length < 20) {
+        } else if (roll < 0.85 && regions.length < 24) {
           const taken = new Set(regions.map((r) => r.id));
           const rid = TOWNS.find((t) => !taken.has(t)) ?? `machi${Math.floor(rand() * 900) + 100}`;
           say(name, `develops ${rid}`, await client.found(name, rid, rid.charAt(0).toUpperCase() + rid.slice(1)));
@@ -371,9 +371,9 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
         const residents = agents.filter((a) => a.region === town.id && a.role !== "treasury").length;
         const fresh = SETTLERS.filter((n) => !agents.some((a) => a.id === `${n}@${town.id}`)).slice(0, 2);
         for (const f of fresh) {
-          if (residents >= 20) break;
+          if (residents >= 26) break;
           say(name, `invites ${f} to ${town.id}`, await client.admit(name, `${f}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 40));
-          await sleep(1300);
+          await sleep(900);
         }
       } else if (roll < 0.9 && owned.length > 0) {
         const town = pick(owned);
@@ -392,7 +392,7 @@ async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledg
     } catch (error) {
       say(name, "stumbled:", error instanceof Error ? error.message : String(error));
     }
-    await sleep(1400);
+    await sleep(900);
   }
 }
 
@@ -418,7 +418,7 @@ async function villagerAct(
     // The sick seek the hospital while they can afford it.
     if (myByoki && agent.balances.currency > 5) {
       say(agent.id, "visits the hospital", await client.transfer(agent.id, `treasury@${agent.region}`, 3));
-      await sleep(1300);
+      await sleep(900);
       say(agent.id, "is cured", await client.transferItem(agent.id, myByoki.id, `treasury@${agent.region}`));
       return;
     }
@@ -426,7 +426,7 @@ async function villagerAct(
     if (roll < 0.06 && age > 150) {
       // A cold is going around.
       say(agent.id, "catches a cold", await client.mintItem(agent.id, `${BYOKI}${Math.random().toString(36).slice(2, 7)}`, BYOKI, agent.id));
-    } else if (roll < 0.3 && !isMarried(edges, agent.id, neighbors) && age > 200) {
+    } else if (roll < 0.35 && !isMarried(edges, agent.id, neighbors) && age > 120) {
       // Courtship: answer a suitor first; otherwise court a single neighbor.
       const suitor = neighbors.find((o) => edges.has(`${o.id}>${agent.id}`) && !isMarried(edges, o.id, neighbors));
       const beloved = suitor ?? neighbors.filter((o) => !isMarried(edges, o.id, neighbors) && !CHILD_NAMES.includes(bareName(o.id)))[0];
@@ -445,7 +445,7 @@ async function villagerAct(
   } catch (error) {
     say(agent.id, "stumbled:", error instanceof Error ? error.message : String(error));
   }
-  await sleep(1300);
+  await sleep(900);
 }
 
 // --- the run ---------------------------------------------------------------------
@@ -459,7 +459,7 @@ if (!worldRegions.some((r) => r.id === AFTERLIFE)) {
   const enma = clientFor("Enma");
   await ensureRegistered(enma, "Enma");
   console.log("[Enma] opens the gate:", JSON.stringify(await enma.found("Enma", AFTERLIFE, "Anoyo")));
-  await sleep(1200);
+  await sleep(900);
 }
 
 const events = await fetchWholeLog(boot);
@@ -472,11 +472,11 @@ const world = {
   items: (await boot.items()) as Item[],
 };
 
-const awake = [...TROUPE].sort(() => rand() - 0.5).slice(0, 4 + Math.floor(rand() * 2));
+const awake = [...TROUPE].sort(() => rand() - 0.5).slice(0, 6 + Math.floor(rand() * 2));
 console.log(`awake: ${awake.join(", ")}`);
 for (const p of awake) await act(p, world);
 
 const villagers = worldAgents.filter((a) => a.role !== "treasury" && a.region !== AFTERLIFE && isBotFolk(a.id));
-const wakingFolk = villagers.sort(() => rand() - 0.5).slice(0, 5 + Math.floor(rand() * 3));
+const wakingFolk = villagers.sort(() => rand() - 0.5).slice(0, 10 + Math.floor(rand() * 5));
 console.log(`villagers about: ${wakingFolk.map((a) => a.id).join(", ") || "(none yet)"}`);
 for (const v of wakingFolk) await villagerAct(v, world);
