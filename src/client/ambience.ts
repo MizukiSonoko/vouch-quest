@@ -186,3 +186,71 @@ export function dayPhase(now = new Date()): DayPhase {
   if (h < 6.5) return { tint: "rgba(140, 150, 220, 0.20)", night: false, label: "よあけ" };
   return { tint: null, night: false, label: "ひるま" };
 }
+
+// --- weather: each biome breathes differently -----------------------------------
+
+import { Biome } from "./map";
+
+interface Drop {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  phase: number;
+  color: string;
+  size: number;
+}
+
+export class Weather {
+  private readonly drops: Drop[] = [];
+
+  update(dt: number, biome: Biome, night: boolean, viewW: number, viewH: number): void {
+    const want =
+      biome === Biome.Snow ? 60 : biome === Biome.Forest ? 14 : biome === Biome.Desert ? 10 : biome === Biome.Swamp && night ? 18 : 0;
+    while (this.drops.length < want) {
+      if (biome === Biome.Snow) {
+        this.drops.push({ x: Math.random() * viewW, y: -8, vx: -0.3 - Math.random() * 0.4, vy: 0.7 + Math.random() * 0.8, phase: Math.random() * 6, color: "#ffffff", size: 3 });
+      } else if (biome === Biome.Forest) {
+        this.drops.push({ x: Math.random() * viewW, y: -8, vx: 0.3 - Math.random() * 0.6, vy: 0.4 + Math.random() * 0.4, phase: Math.random() * 6, color: Math.random() < 0.5 ? "#7bc44a" : "#d9a53f", size: 3 });
+      } else if (biome === Biome.Desert) {
+        this.drops.push({ x: -10, y: Math.random() * viewH, vx: 3 + Math.random() * 2.5, vy: 0.1, phase: Math.random() * 6, color: "rgba(232, 204, 130, 0.7)", size: 2 });
+      } else {
+        this.drops.push({ x: Math.random() * viewW, y: Math.random() * viewH, vx: 0, vy: 0, phase: Math.random() * 6, color: "#b8ff6a", size: 3 });
+      }
+    }
+    if (this.drops.length > want) this.drops.splice(0, this.drops.length - want);
+    for (const d of this.drops) {
+      d.phase += dt / 400;
+      if (biome === Biome.Swamp) {
+        // fireflies drift and blink in place
+        d.x += Math.cos(d.phase) * 0.4;
+        d.y += Math.sin(d.phase * 1.3) * 0.3;
+      } else {
+        d.x += (d.vx + Math.sin(d.phase) * 0.3) * (dt / 16.7);
+        d.y += d.vy * (dt / 16.7);
+      }
+      if (d.y > viewH + 10) {
+        d.y = -8;
+        d.x = Math.random() * viewW;
+      }
+      if (d.x > viewW + 12) {
+        d.x = -10;
+        d.y = Math.random() * viewH;
+      }
+      if (d.x < -12) d.x = viewW + 8;
+    }
+  }
+
+  render(ctx: CanvasRenderingContext2D, biome: Biome): void {
+    for (const d of this.drops) {
+      if (biome === Biome.Swamp) {
+        const blink = (Math.sin(d.phase * 2.2) + 1) / 2;
+        if (blink < 0.35) continue;
+        ctx.globalAlpha = blink;
+      }
+      ctx.fillStyle = d.color;
+      ctx.fillRect(d.x, d.y, d.size, d.size);
+      ctx.globalAlpha = 1;
+    }
+  }
+}

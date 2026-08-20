@@ -5,10 +5,10 @@
 // Every action becomes a signed command; every world event scrolls the newspaper.
 
 import type { AgentView, ItemView, LogEventView, Snapshot } from "../shared";
-import { dayPhase, ParticleField, Wildlife } from "./ambience";
+import { dayPhase, ParticleField, Weather, Wildlife } from "./ambience";
 import { npcLines } from "./dialogue";
 import { eventToMessage } from "./feed";
-import { buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, type WorldMap } from "./map";
+import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, type WorldMap } from "./map";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
 import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
 import { canShopHere, CATALOG, kindName, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
@@ -26,6 +26,7 @@ const ui = new UiStack();
 const log = new MessageLog();
 const particles = new ParticleField();
 const wildlife = new Wildlife();
+const weather = new Weather();
 let scene: "title" | "game" = "title";
 let banner: { text: string; until: number } | null = null;
 let tickerText = "";
@@ -288,7 +289,7 @@ function npcMenu(mob: Mob): void {
           const owner = snapshot?.regions.find((r) => r.id === a.region)?.owner ?? null;
           ui.push(
             new Info(a.id, [
-              ...npcLines(a, snapshot?.items ?? [], owner),
+              ...npcLines(a, snapshot?.items ?? [], owner, map?.villages.find((v) => v.regionId === a.region)?.biome ?? Biome.Plains),
               "",
               `しょくぎょう: ${roleJa(a.role)}`,
               `しょじきん: ${a.balances.currency}G  くれじっと: ${a.balances.credit}`,
@@ -355,6 +356,7 @@ function villageInfo(ctx: VillageContext): void {
   ui.push(
     new Info(`むら「${region.displayName}」(${region.id})`, [
       `あるじ: ${region.owner ?? "なし"}  じょうたい: ${region.lifecycle}`,
+      `きこう: ${BIOME_JA[map?.villages.find((v) => v.regionId === region.id)?.biome ?? Biome.Plains]}`,
       `せいじ: ${ctx.isCouncil ? "ひょうぎかい" : "どくさいせい"}`,
       `どうぐづくり: ${ctx.mintingOpen ? "だれでも" : "あるじのみ"}`,
       `ぜいりつ: ${region.institutions.economyPolicy.baseCostRate} (さいてい ${region.institutions.economyPolicy.minCostRate})`,
@@ -758,6 +760,10 @@ const MINI_COLORS: Record<number, string> = {
   [Tile.Rock]: "#6a6a6a",
   [Tile.Flower]: "#f0a0c0",
   [Tile.Stall]: "#d9553f",
+  [Tile.Snow]: "#dde8f2",
+  [Tile.SnowTree]: "#a9c2d4",
+  [Tile.Cactus]: "#2c8a4a",
+  [Tile.Swamp]: "#4a5a30",
 };
 const MINI_SCALE = 5;
 let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;
@@ -886,6 +892,7 @@ function tryStep(dx: number, dy: number): void {
 function update(dt: number): void {
   particles.update(dt);
   wildlife.update(dt, canvas.width, canvas.height, camXg, camYg);
+  weather.update(dt, biomeAt(player.x, player.y), dayPhase().night, canvas.width, canvas.height);
   tickerX -= dt * 0.06;
   // Player: tween toward the target tile; accept a new step when settled.
   const tx = player.x * CELL;
@@ -1022,7 +1029,7 @@ function render(): void {
   }
 
   for (const village of map.villages) {
-    drawText(ctx, village.displayName, village.x * CELL - camX + 8, (village.y - 1) * CELL - camY + 20, "#ffd75e");
+    drawText(ctx, `${village.displayName} (${BIOME_JA[village.biome]})`, village.x * CELL - camX + 8, (village.y - 1) * CELL - camY + 20, "#ffd75e");
     ctx.font = '13px "DotGothic16", monospace';
     ctx.fillStyle = "#ffffff";
     const label = (text: string, at: readonly [number, number]) =>
@@ -1069,6 +1076,7 @@ function render(): void {
 
   wildlife.render(ctx, camX, camY);
   particles.render(ctx, camX, camY);
+  weather.render(ctx, biomeAt(player.x, player.y));
 
   // Day-night mood, with lamps and windows glowing after dark.
   const phase = dayPhase();

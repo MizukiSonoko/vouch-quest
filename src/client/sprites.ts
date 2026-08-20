@@ -40,6 +40,10 @@ const PALETTE: Record<string, string> = {
   n: "#24408e", // hall roof navy
   N: "#4a6fe0", // hall roof light
   q: "#b8860b", // mint roof gold-dark
+  z: "#dde8f2", // snow base
+  Z: "#ffffff", // snow bright
+  u: "#4a5a30", // swamp murk
+  U: "#5d7038", // swamp murk light
 };
 
 function draw(rows: readonly string[], scale = SCALE): HTMLCanvasElement {
@@ -166,6 +170,47 @@ const ROCK = [
   "gggGgggggggdgggg",
   "gggggggggggggggg",
   "gggggggggggggggg",
+];
+
+const SNOW = R("zzzzzzzzzzzzzzzz").map((row, y) => (y % 5 === 2 ? "zzZzzzzzmzzzzZzz" : y % 7 === 4 ? "zzzzzZzzzzzmzzzz" : row));
+const SWAMP = R("uuuuuuuuuuuuuuuu").map((row, y) => (y % 4 === 1 ? "uuUuuuuwuuuUuuuu" : y % 5 === 3 ? "uuuuUuuuuuwuuuuu" : row));
+
+const SNOWTREE = [
+  "....mmZZmm......",
+  "...mZZZZZZm.....",
+  "..mZZmZZZZZm....",
+  ".mZZZZZZmZZZm...",
+  ".mZmZZZZZZZZm...",
+  "mZZZZmZZZZmZZm..",
+  "mZZZZZZZZZZZZm..",
+  ".mmZZZZmZZZmm...",
+  "..mmmZZZZmmm....",
+  "....mmbbmm......",
+  ".....bbbb.......",
+  ".....bbbb.......",
+  "zzzzzbbbbzzzzzz.",
+  "zzzzmzzzzzzZzzzz",
+  "zzzzzzzmzzzzzzzz",
+  "zzzZzzzzzzzzzzzz",
+].map((r) => r.replaceAll(".", "z"));
+
+const CACTUS = [
+  "ssssssssssssssss",
+  "ssssssxaaxssssss",
+  "ssssssxaTxssssss",
+  "ssssssxaaxssssss",
+  "ssxaxsxaTxsxaxss",
+  "ssxaxsxaaxsxaxss",
+  "ssxaaxxaTxxaaxss",
+  "sssxaaaaaaaaxsss",
+  "ssssxxxaTxxxssss",
+  "ssssssxaaxssssss",
+  "ssssssxaTxssssss",
+  "ssssssxaaxssssss",
+  "ssssssxxxxssssss",
+  "ssSsssssssssSsss",
+  "ssssssssssssssss",
+  "ssssssssssssssss",
 ];
 
 const STALL = [
@@ -422,6 +467,10 @@ export function buildSprites(): SpriteSet {
     [Tile.Lamp, draw(LAMP)],
     [Tile.WallWindow, draw(winIn(WALL))],
     [Tile.WallWoodWindow, draw(winIn(WALL_WOOD))],
+    [Tile.Snow, draw(SNOW)],
+    [Tile.SnowTree, draw(SNOWTREE)],
+    [Tile.Cactus, draw(CACTUS)],
+    [Tile.Swamp, draw(SWAMP)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();

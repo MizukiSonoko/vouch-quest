@@ -46,6 +46,10 @@ export const enum Tile {
   Lamp = 28,
   WallWindow = 29,
   WallWoodWindow = 30,
+  Snow = 31,
+  SnowTree = 32,
+  Cactus = 33,
+  Swamp = 34,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -75,6 +79,8 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.Lamp,
   Tile.WallWindow,
   Tile.WallWoodWindow,
+  Tile.SnowTree,
+  Tile.Cactus,
 ]);
 
 /** Village slot origins (top-left), spaced for the largest possible plot (20x15). */
@@ -93,6 +99,7 @@ export const SLOTS: readonly (readonly [number, number])[] = [
 export interface Village {
   readonly regionId: string;
   readonly displayName: string;
+  readonly biome: Biome;
   readonly x: number;
   readonly y: number;
   readonly w: number;
@@ -120,6 +127,65 @@ function hash2(x: number, y: number): number {
   let h = (x * 374761393 + y * 668265263) ^ 0x9e3779b9;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 0xffffffff;
+}
+
+// --- biomes: temperature x moisture value-noise, identical for every player -----
+
+export const enum Biome {
+  Plains = 0,
+  Forest = 1,
+  Desert = 2,
+  Snow = 3,
+  Swamp = 4,
+}
+
+export const BIOME_JA: Readonly<Record<Biome, string>> = {
+  [Biome.Plains]: "そうげん",
+  [Biome.Forest]: "しんりん",
+  [Biome.Desert]: "さばく",
+  [Biome.Snow]: "せつげん",
+  [Biome.Swamp]: "しっち",
+};
+
+/** Smooth value noise: bilinear interpolation over the coordinate hash lattice. */
+function valueNoise(x: number, y: number, scale: number, seed: number): number {
+  const gx = x / scale;
+  const gy = y / scale;
+  const x0 = Math.floor(gx);
+  const y0 = Math.floor(gy);
+  const fx = gx - x0;
+  const fy = gy - y0;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const a = hash2(x0 + seed, y0);
+  const b = hash2(x0 + 1 + seed, y0);
+  const c = hash2(x0 + seed, y0 + 1);
+  const d = hash2(x0 + 1 + seed, y0 + 1);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+
+export function biomeAt(x: number, y: number): Biome {
+  const heat = valueNoise(x, y, 26, 1000);
+  const wet = valueNoise(x, y, 22, 7777);
+  if (heat > 0.72) return Biome.Desert;
+  if (heat < 0.28) return Biome.Snow;
+  if (wet > 0.68) return Biome.Swamp;
+  if (wet < 0.38) return Biome.Forest;
+  return Biome.Plains;
+}
+
+/** The two ground tiles a biome walks on (used by terrain and village floors). */
+export function biomeGround(biome: Biome): readonly [Tile, Tile] {
+  switch (biome) {
+    case Biome.Desert:
+      return [Tile.Sand, Tile.Sand] as const;
+    case Biome.Snow:
+      return [Tile.Snow, Tile.Snow] as const;
+    case Biome.Swamp:
+      return [Tile.Swamp, Tile.Swamp] as const;
+    default:
+      return [Tile.Grass, Tile.Grass2] as const;
+  }
 }
 
 /** Deterministic per-village PRNG (mulberry32 over a string hash of the regionId). */
@@ -166,11 +232,13 @@ function carveVillage(
   const [vx, vy] = slot;
   const w = MIN_PLOT_W + Math.floor(rng() * (MAX_PLOT_W - MIN_PLOT_W + 1));
   const h = MIN_PLOT_H + Math.floor(rng() * (MAX_PLOT_H - MIN_PLOT_H + 1));
+  const biome = biomeAt(vx + Math.floor(w / 2), vy + Math.floor(h / 2));
+  const [g1, g2] = biomeGround(biome);
 
-  // Clear the plot, fence the perimeter, open a south gate at a random position.
+  // Clear the plot to the biome's ground, fence it, open a south gate.
   for (let y = vy; y < vy + h; y++) {
     for (let x = vx; x < vx + w; x++) {
-      set(tiles, x, y, (x + y) % 7 === 0 ? Tile.Grass2 : Tile.Grass);
+      set(tiles, x, y, (x + y) % 7 === 0 ? g2 : g1);
     }
   }
   for (let x = vx; x < vx + w; x++) {
@@ -264,7 +332,7 @@ function carveVillage(
       const built = drawBuilding(bx, by, 3, roofRows, wallRows, { roof, wall: Tile.HouseWall, door, window: Tile.WallWindow });
       for (const [cx, cy] of built.cells) protectedCells.add(key(cx, cy));
       protectedCells.add(key(built.door[0], built.door[1] + 1));
-      set(tiles, built.door[0], built.door[1] + 1, (built.door[0] + built.door[1]) % 7 === 0 ? Tile.Grass2 : Tile.Grass);
+      set(tiles, built.door[0], built.door[1] + 1, g1);
       doors[kind] = built.door;
       placed = true;
     }
@@ -310,13 +378,13 @@ function carveVillage(
     if (get(tiles, door[0], door[1]) !== tile) continue;
     const front: readonly [number, number] = [door[0], door[1] + 1];
     if (!inside(front[0], front[1]) || protectedCells.has(key(front[0], front[1]))) continue;
-    set(tiles, front[0], front[1], (front[0] + front[1]) % 7 === 0 ? Tile.Grass2 : Tile.Grass);
+    set(tiles, front[0], front[1], g1);
     spots.push(front);
   }
 
   const isFree = (x: number, y: number): boolean => {
     const t = get(tiles, x, y);
-    return (t === Tile.Grass || t === Tile.Grass2) && x !== gx && !protectedCells.has(key(x, y));
+    return (t === g1 || t === g2 || t === Tile.Grass || t === Tile.Grass2) && x !== gx && !protectedCells.has(key(x, y));
   };
 
   // The treasury chest lands on any free cell in the upper half of the village.
@@ -347,12 +415,15 @@ function carveVillage(
   set(tiles, stall[0], stall[1], Tile.Stall);
 
   // Village character: a well, lamps, farm plots, rocks, ponds, flowers — all per-region.
+  const lush = biome === Biome.Plains || biome === Biome.Forest;
   const decor: [Tile, number][] = [
     [Tile.Well, rng() < 0.75 ? 1 : 0],
     [Tile.Lamp, 1 + Math.floor(rng() * 2)],
-    [Tile.Rock, Math.floor(rng() * 4)],
-    [Tile.Water, Math.floor(rng() * 3)],
-    [Tile.Flower, 1 + Math.floor(rng() * 5)],
+    [Tile.Rock, Math.floor(rng() * (biome === Biome.Desert || biome === Biome.Snow ? 6 : 4))],
+    [Tile.Water, biome === Biome.Desert ? (rng() < 0.4 ? 1 : 0) : Math.floor(rng() * 3)],
+    [Tile.Flower, lush ? 1 + Math.floor(rng() * 5) : 0],
+    [Tile.Cactus, biome === Biome.Desert ? 1 + Math.floor(rng() * 3) : 0],
+    [Tile.SnowTree, biome === Biome.Snow ? 1 + Math.floor(rng() * 2) : 0],
   ];
   for (const [tile, count] of decor) {
     for (let i = 0; i < count; i++) {
@@ -368,7 +439,7 @@ function carveVillage(
   }
 
   // Farm plots: little tilled clusters (up to 2x2 each), where the land is free.
-  const farms = Math.floor(rng() * 3);
+  const farms = lush || biome === Biome.Swamp ? Math.floor(rng() * 3) : 0;
   for (let i = 0; i < farms; i++) {
     for (let tries = 0; tries < 12; tries++) {
       const fx = vx + 2 + Math.floor(rng() * (w - 5));
@@ -390,7 +461,7 @@ function carveVillage(
     if (isFree(sx, sy)) spots.push([sx, sy] as const);
   }
 
-  return { x: vx, y: vy, w, h, gate: [gx, vy + h - 1] as const, sign, chest, stall, hall, mint, court, spots };
+  return { x: vx, y: vy, w, h, biome, gate: [gx, vy + h - 1] as const, sign, chest, stall, hall, mint, court, spots };
 }
 
 export function buildMap(snapshot: Snapshot): WorldMap {
@@ -400,10 +471,32 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     for (let x = 0; x < MAP_W; x++) {
       const border = x < 2 || y < 2 || x >= MAP_W - 2 || y >= MAP_H - 2;
       const r = hash2(x, y);
-      let t: Tile = r < 0.5 ? Tile.Grass : Tile.Grass2;
-      if (r > 0.94) t = Tile.Tree;
-      else if (r > 0.925) t = Tile.Rock;
-      else if (r < 0.03) t = Tile.Flower;
+      const biome = biomeAt(x, y);
+      const [g1, g2] = biomeGround(biome);
+      let t: Tile = r < 0.5 ? g1 : g2;
+      switch (biome) {
+        case Biome.Forest:
+          if (r > 0.78) t = Tile.Tree;
+          else if (r > 0.765) t = Tile.Rock;
+          else if (r < 0.015) t = Tile.Flower;
+          break;
+        case Biome.Desert:
+          if (r > 0.95) t = Tile.Cactus;
+          else if (r > 0.92) t = Tile.Rock;
+          break;
+        case Biome.Snow:
+          if (r > 0.92) t = Tile.SnowTree;
+          else if (r > 0.90) t = Tile.Rock;
+          break;
+        case Biome.Swamp:
+          if (r > 0.86) t = Tile.Water;
+          else if (r > 0.82) t = Tile.Tree;
+          break;
+        default:
+          if (r > 0.94) t = Tile.Tree;
+          else if (r > 0.925) t = Tile.Rock;
+          else if (r < 0.03) t = Tile.Flower;
+      }
       if (border) t = Tile.Water;
       else if (x < 4 || y < 4 || x >= MAP_W - 4 || y >= MAP_H - 4) t = r > 0.5 ? Tile.Sand : t;
       tiles[y * MAP_W + x] = t;

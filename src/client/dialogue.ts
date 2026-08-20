@@ -3,6 +3,7 @@
 // through conversation. Same agent, same state → same words for every player.
 
 import type { AgentView, ItemView } from "../shared";
+import { Biome } from "./map";
 import { kindName } from "./shop";
 
 function pick<T>(seedText: string, pool: readonly T[]): T {
@@ -17,11 +18,20 @@ const GREETINGS: Record<string, readonly string[]> = {
   broker: ["じょうほうなら まかせな。", "とりひきの なかだちは わたしのしごと。", "かねの ながれは よどまぬものさ。"],
 };
 
-export function npcLines(agent: AgentView, worldItems: readonly ItemView[], regionOwner: string | null): string[] {
+const BIOME_TALK: Readonly<Record<Biome, readonly string[]>> = {
+  [Biome.Plains]: ["ここらは のどかで いいところさ。", "かぜが きもちいい ひだね。"],
+  [Biome.Forest]: ["もりの めぐみに かんしゃして いきてるのさ。", "きのねっこに つまずくなよ。"],
+  [Biome.Desert]: ["…みず、もってるかい? ここじゃ いのちより たかい。", "あつさで あたまが くらくらするぜ。ようけんは てみじかにな。"],
+  [Biome.Snow]: ["さむかったろう。ひに あたっていきな。", "ゆきの よるは ながい。だから はなしが うまくなるのさ。"],
+  [Biome.Swamp]: ["ぬまの ゆうぐれは うつくしいぞ… みたことあるか?", "カエルの こえを かぞえていたら あさになった。"],
+};
+
+export function npcLines(agent: AgentView, worldItems: readonly ItemView[], regionOwner: string | null, biome: Biome = Biome.Plains): string[] {
   const lines: string[] = [];
   const seed = agent.id;
 
   lines.push(pick(seed, GREETINGS[agent.role] ?? ["こんにちは、たびのかた。"]));
+  lines.push(pick(`${seed}b`, BIOME_TALK[biome]));
 
   const gold = agent.balances.currency;
   if (gold < 10) lines.push(pick(`${seed}p`, ["さいきん ふところが さむくてね…", "だれか めぐんでは くれんかのう。", "きょうの パンにも こまるありさまさ。"]));
