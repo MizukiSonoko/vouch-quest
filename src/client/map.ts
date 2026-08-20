@@ -133,6 +133,8 @@ export interface WorldMap {
   readonly villages: readonly Village[];
   /** Rail segments (tile-coordinate polylines) for the running trains. */
   readonly rails: readonly (readonly (readonly [number, number])[])[];
+  /** Road polylines between friendly villages — the caravans travel these. */
+  readonly roads: readonly (readonly (readonly [number, number])[])[];
 }
 
 /** How far a settlement has developed, from its REAL population and treasury. */
@@ -563,6 +565,7 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= MAP_H - 2 || inAnyPlot(x, y)) return;
     set(tiles, x, y, Tile.Path);
   };
+  const roads: (readonly [number, number])[][] = [];
   for (const [aId, bId] of friendlyPairs(snapshot.regions)) {
     const a = villages.find((v) => v.regionId === aId);
     const b = villages.find((v) => v.regionId === bId);
@@ -571,8 +574,18 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     const [bx, byGate] = b.gate;
     const ay = ayGate + 1;
     const by = byGate + 1;
-    for (let y = Math.min(ay, by); y <= Math.max(ay, by); y++) pave(ax, y);
-    for (let x = Math.min(ax, bx); x <= Math.max(ax, bx); x++) pave(x, by);
+    const path: (readonly [number, number])[] = [];
+    const dirY = Math.sign(by - ay) || 1;
+    for (let y = ay; y !== by; y += dirY) {
+      pave(ax, y);
+      path.push([ax, y] as const);
+    }
+    const dirX = Math.sign(bx - ax) || 1;
+    for (let x = ax; x !== bx + dirX; x += dirX) {
+      pave(x, by);
+      path.push([x, by] as const);
+    }
+    if (path.length > 3) roads.push(path);
   }
 
   // Rails: the stations form a line — technology stitches the cities together.
@@ -605,7 +618,7 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     rails.push(path);
   }
 
-  return { tiles, villages, rails };
+  return { tiles, villages, rails, roads };
 }
 
 /** Stable NPC placement: region residents (minus the hero) each take a village spot. */

@@ -5,7 +5,7 @@
 // Every action becomes a signed command; every world event scrolls the newspaper.
 
 import type { AgentView, ItemView, LogEventView, Snapshot } from "../shared";
-import { dayPhase, ParticleField, Weather, Wildlife } from "./ambience";
+import { dayPhase, ParticleField, SkyShow, Weather, Wildlife } from "./ambience";
 import { npcLines } from "./dialogue";
 import { eventToMessage } from "./feed";
 import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, type WorldMap } from "./map";
@@ -28,6 +28,26 @@ const log = new MessageLog();
 const particles = new ParticleField();
 const wildlife = new Wildlife();
 const weather = new Weather();
+const sky = new SkyShow();
+const festivals = new Map<string, number>();
+const prevTiers = new Map<string, number>();
+let gogai: { text: string; until: number } | null = null;
+let shakeUntil = 0;
+interface Critter {
+  kind: string;
+  x: number;
+  y: number;
+  px: number;
+  py: number;
+  timer: number;
+}
+let critters: Critter[] = [];
+
+function extraExtra(text: string): void {
+  gogai = { text, until: performance.now() + 4600 };
+  shakeUntil = performance.now() + 700;
+  se("fanfare");
+}
 let scene: "title" | "game" = "title";
 let banner: { text: string; until: number } | null = null;
 let tickerText = "";
@@ -113,6 +133,28 @@ async function refreshWorld(repositionHero: boolean): Promise<void> {
     }
   }
   wildlife.seedButterflies(flowers);
+  // Development leaps make the front page — and start a festival.
+  for (const v of map.villages) {
+    const prev = prevTiers.get(v.regionId);
+    if (prev !== undefined && v.tier > prev) {
+      const rank = v.tier >= 2 ? "とし" : "まち";
+      extraExtra(`ごうがい! ${v.displayName}が 「${rank}」に はってん!`);
+      festivals.set(v.regionId, performance.now() + 120_000);
+      particles.firework((v.x + v.w / 2) * CELL, (v.y + v.h / 2) * CELL);
+    }
+    prevTiers.set(v.regionId, v.tier);
+  }
+  // Wild critters, seeded per biome out in the open country.
+  critters = [];
+  for (let tries = 0; critters.length < 24 && tries < 400; tries++) {
+    const cx = 4 + Math.floor(Math.random() * (MAP_W - 8));
+    const cy = 4 + Math.floor(Math.random() * (MAP_H - 8));
+    if (isSolid(map, cx, cy) || map.villages.some((v) => cx >= v.x && cx < v.x + v.w && cy >= v.y && cy < v.y + v.h)) continue;
+    const biome = biomeAt(cx, cy);
+    const kind =
+      biome === Biome.Desert ? "scorpion" : biome === Biome.Snow ? "yukidaruma" : biome === Biome.Swamp ? "obake" : Math.random() < 0.5 ? "slime" : "usagi";
+    critters.push({ kind, x: cx, y: cy, px: cx * CELL, py: cy * CELL, timer: Math.random() * 2000 });
+  }
   rebuildTicker();
   if (repositionHero || isSolid(map, player.x, player.y)) {
     const [sx, sy] = heroSpawn(snap, map);
@@ -170,8 +212,7 @@ function celebrate(): void {
       case "region.founded": {
         const at = villageCenterPx(pick(p, "region.id"));
         if (at) particles.firework(at[0], at[1]);
-        banner = { text: eventToMessage(e), until: now + 4200 };
-        se("fanfare");
+        extraExtra(eventToMessage(e));
         break;
       }
       case "economy.settled": {
@@ -193,9 +234,19 @@ function celebrate(): void {
       }
       case "agent.admitted":
       case "agent.migrated": {
-        const at = villageCenterPx(pick(p, "admission.region", "toRegion"));
+        const rid = pick(p, "admission.region", "toRegion");
+        const at = villageCenterPx(rid);
         if (at) particles.sparkle(at[0], at[1], "#a5ff8a");
         banner = { text: eventToMessage(e), until: now + 3200 };
+        // A population milestone throws a festival for the whole village.
+        if (e.type === "agent.admitted" && rid) {
+          const residents = snapshot?.agents.filter((a) => a.region === rid && a.role !== "treasury").length ?? 0;
+          if (residents > 0 && residents % 5 === 0) {
+            const v = map?.villages.find((x) => x.regionId === rid);
+            festivals.set(rid, now + 120_000);
+            extraExtra(`ごうがい! ${v?.displayName ?? rid}は じゅうみん${residents}にん! むらは おまつりだ!`);
+          }
+        }
         break;
       }
       case "region.institution.changed": {
@@ -203,8 +254,8 @@ function celebrate(): void {
         const isConstitution = ((p as Record<string, unknown>)["change"] as Record<string, unknown> | undefined)?.["policy"] === "governance";
         if (at && isConstitution) particles.firework(at[0], at[1]);
         else if (at) particles.sparkle(at[0], at[1], "#8fd0ff");
-        banner = { text: eventToMessage(e), until: now + (isConstitution ? 4200 : 3200) };
-        if (isConstitution) se("fanfare");
+        if (isConstitution) extraExtra(eventToMessage(e));
+        else banner = { text: eventToMessage(e), until: now + 3200 };
         break;
       }
       case "gov.proposal.opened":
@@ -753,6 +804,18 @@ function interact(): void {
   const fy = player.y + player.dy;
   const mob = mobs.find((m) => m.x === fx && m.y === fy);
   if (mob) return npcMenu(mob);
+  const critter = critters.find((c) => c.x === fx && c.y === fy);
+  if (critter) {
+    const lines: Record<string, string[]> = {
+      slime: ["スライムは ぷるぷる している。", "なにか いいたげだが、ぷるぷる しか いわない。"],
+      usagi: ["うさぎは みみを ぴんと たてた。", "はなを ひくひく させている。かわいい。"],
+      scorpion: ["さそりだ! …こちらを みている。そっと しておこう。", "さばくの ぬしかもしれない。"],
+      yukidaruma: ["ゆきだるまだ。だれが つくったのだろう…", "…いま、うごかなかったか?"],
+      obake: ["ひやりと した かぜが ふいた。", "おばけは にっこり わらった。わるい こは いないか、と。"],
+    };
+    ui.push(new Info("いきもの", lines[critter.kind] ?? ["なにかが いる。"], () => ui.pop()));
+    return;
+  }
   const tile = tileAt(map, fx, fy);
   if (tile === Tile.Sign) {
     const village = map.villages.find((v) => v.sign[0] === fx && v.sign[1] === fy);
@@ -994,6 +1057,42 @@ function update(dt: number): void {
   particles.update(dt);
   wildlife.update(dt, canvas.width, canvas.height, camXg, camYg);
   weather.update(dt, biomeAt(player.x, player.y), dayPhase().night, canvas.width, canvas.height);
+  sky.update(dt, dayPhase().night);
+
+  // Festival confetti rains over celebrating villages; expired festivals end.
+  for (const [rid, until] of festivals) {
+    if (performance.now() > until) {
+      festivals.delete(rid);
+      continue;
+    }
+    const v = map?.villages.find((x) => x.regionId === rid);
+    if (v && Math.random() < 0.5) {
+      particles.confetti((v.x + 1 + Math.random() * (v.w - 2)) * CELL, (v.y + 1) * CELL);
+    }
+  }
+
+  // Critters amble about the wild.
+  for (const c of critters) {
+    const cx = c.x * CELL;
+    const cy = c.y * CELL;
+    if (c.px !== cx || c.py !== cy) {
+      const step = 1.1 * (dt / 16.7);
+      c.px += Math.sign(cx - c.px) * Math.min(step, Math.abs(cx - c.px));
+      c.py += Math.sign(cy - c.py) * Math.min(step, Math.abs(cy - c.py));
+      continue;
+    }
+    c.timer -= dt;
+    if (c.timer > 0) continue;
+    c.timer = 1200 + Math.random() * 2600;
+    const dirs = [[0, 1], [0, -1], [1, 0], [-1, 0]] as const;
+    const [dx2, dy2] = dirs[Math.floor(Math.random() * dirs.length)] ?? [0, 0];
+    const nx = c.x + dx2;
+    const ny = c.y + dy2;
+    if (map && !isSolid(map, nx, ny) && !map.villages.some((v) => nx >= v.x && nx < v.x + v.w && ny >= v.y && ny < v.y + v.h)) {
+      c.x = nx;
+      c.y = ny;
+    }
+  }
   tickerX -= dt * 0.06;
   // Player: tween toward the target tile; accept a new step when settled.
   const tx = player.x * CELL;
@@ -1043,6 +1142,10 @@ function update(dt: number): void {
     }
 
     const home = mob.home;
+    // Festival! Everyone drifts toward the stall square.
+    if (home && festivals.has(home.regionId) && !mob.target && Math.random() < 0.7) {
+      mob.target = [home.stall[0], home.stall[1] + 1] as const;
+    }
     // Pick an errand now and then: the stall, the signboard, a house front, a neighbor.
     if (!mob.target && home && Math.random() < 0.45) {
       const pois: (readonly [number, number])[] = [
@@ -1112,8 +1215,9 @@ function render(): void {
     return;
   }
 
-  const camX = Math.max(0, Math.min(player.px - w / 2 + CELL / 2, MAP_W * CELL - w));
-  const camY = Math.max(0, Math.min(player.py - h / 2 + CELL / 2, MAP_H * CELL - h));
+  const shake = performance.now() < shakeUntil ? 5 : 0;
+  const camX = Math.max(0, Math.min(player.px - w / 2 + CELL / 2, MAP_W * CELL - w)) + (Math.random() - 0.5) * shake;
+  const camY = Math.max(0, Math.min(player.py - h / 2 + CELL / 2, MAP_H * CELL - h)) + (Math.random() - 0.5) * shake;
   camXg = camX;
   camYg = camY;
   const x0 = Math.floor(camX / CELL);
@@ -1153,6 +1257,19 @@ function render(): void {
       ctx.fillStyle = "#ffffff";
       ctx.fillText(REGIME_JA[regime].label, fpx - 10, fpy + 50);
     }
+    // Festival lanterns swing along the fence while the party lasts.
+    if (festivals.has(village.regionId)) {
+      const sway = Math.sin(performance.now() / 260) * 3;
+      for (let lx = village.x + 1; lx < village.x + village.w - 1; lx += 2) {
+        ctx.fillStyle = (lx / 2) % 2 === 0 ? "#ff5a4a" : "#ffd75e";
+        ctx.beginPath();
+        ctx.arc(lx * CELL - camX + CELL / 2, village.y * CELL - camY + 10 + sway, 7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.font = '20px "DotGothic16", monospace';
+      ctx.fillStyle = "#ffd75e";
+      ctx.fillText("★まつり★", (village.x + village.w / 2 - 2) * CELL - camX, (village.y - 1) * CELL - camY - 4 + sway);
+    }
     // 関所ばた: this village's diplomatic stance toward the hero's home village.
     const myHome = snapshot.me.agentId?.split("@")[1];
     const region = snapshot.regions.find((r) => r.id === village.regionId);
@@ -1187,6 +1304,33 @@ function render(): void {
     ctx.fillText(mob.bubble.text, bx + 7, by + 14);
   }
 
+  // Wild critters.
+  for (const c of critters) {
+    const sprite = sprites.critters[c.kind];
+    if (sprite) ctx.drawImage(sprite, c.px - camX, c.py - camY);
+  }
+
+  // Caravan carts trundle along the friendship roads.
+  for (const road of map.roads) {
+    if (road.length < 4) continue;
+    const span = road.length - 1;
+    const t = Math.floor(performance.now() / 300) % (span * 2);
+    const idx = t <= span ? t : span * 2 - t;
+    const pt = road[idx];
+    if (!pt) continue;
+    const px = pt[0] * CELL - camX + 6;
+    const py = pt[1] * CELL - camY + 12;
+    ctx.fillStyle = "#8a5a2b";
+    ctx.fillRect(px, py, 30, 18);
+    ctx.fillStyle = "#e8e0c8";
+    ctx.fillRect(px + 3, py - 8, 24, 10);
+    ctx.fillStyle = "#3a2a16";
+    ctx.fillRect(px + 3, py + 18, 8, 6);
+    ctx.fillRect(px + 19, py + 18, 8, 6);
+    ctx.fillStyle = "#6a4a2a";
+    ctx.fillRect(px + 30, py + 2, 12, 12);
+  }
+
   // Trains shuttle along the rails, back and forth.
   for (const rail of map.rails) {
     if (rail.length < 4) continue;
@@ -1213,6 +1357,7 @@ function render(): void {
   wildlife.render(ctx, camX, camY);
   particles.render(ctx, camX, camY);
   weather.render(ctx, biomeAt(player.x, player.y));
+  sky.render(ctx, w, dayPhase().night, biomeAt(player.x, player.y) === Biome.Snow);
 
   // Day-night mood, with lamps and windows glowing after dark.
   const phase = dayPhase();
@@ -1297,6 +1442,25 @@ function render(): void {
     drawWindow(ctx, w - gw - 12, 40, gw, 44);
     ctx.fillStyle = "#a5ff8a";
     ctx.fillText(nextGoal, w - gw + 3, 66);
+  }
+
+  // 号外! — a full-width ribbon slams in for front-page news.
+  if (gogai) {
+    const remain = gogai.until - performance.now();
+    if (remain <= 0) gogai = null;
+    else {
+      const slide = Math.max(0, remain - 4100) * 2;
+      ctx.globalAlpha = Math.min(1, remain / 500);
+      ctx.fillStyle = "#a01818";
+      ctx.fillRect(0, 130, w, 64);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 130, w, 4);
+      ctx.fillRect(0, 190, w, 4);
+      ctx.font = '26px "DotGothic16", monospace';
+      const tw2 = ctx.measureText(gogai.text).width;
+      ctx.fillText(gogai.text, Math.max((w - tw2) / 2, 20) - slide, 172);
+      ctx.globalAlpha = 1;
+    }
   }
 
   // 速報バナー — big news floats center-screen for a few seconds.

@@ -524,11 +524,107 @@ function hero(look: HeroLook, frame: 0 | 1): string[] {
   return rows;
 }
 
+const SLIME = [
+  "................",
+  "................",
+  "................",
+  "................",
+  "......xxxx......",
+  "....xxaTTaxx....",
+  "...xaTTTTTTax...",
+  "...xaTeTTeTax...",
+  "..xaTTeTTeTTax..",
+  "..xaTTTTTTTTax..",
+  "..xaTTTxxTTTax..",
+  "...xaTTTTTTax...",
+  "....xxaaaaxx....",
+  "......xxxx......",
+  "................",
+  "................",
+];
+
+const SCORPION = [
+  "................",
+  "................",
+  "..........xx....",
+  ".........x..x...",
+  "..........xx....",
+  ".........xx.....",
+  "....xxxxxx......",
+  "...xbbbbbbx.....",
+  "..xbbxbbxbbx....",
+  "...xbbbbbbx.....",
+  "..x.x....x.x....",
+  ".x..x....x..x...",
+  "................",
+  "................",
+  "................",
+  "................",
+];
+
+const YUKIDARUMA = [
+  "................",
+  "................",
+  "....xxxxxx......",
+  "...xZZZZZZx.....",
+  "...xZxZZxZx.....",
+  "...xZZZZZZx.....",
+  "...xZZxxZZx.....",
+  "..xxZZZZZZxx....",
+  ".xZZZZZZZZZZx...",
+  ".xZZxZZZZxZZx...",
+  ".xZZZZZZZZZZx...",
+  ".xZZZZxxZZZZx...",
+  "..xZZZZZZZZx....",
+  "...xxxxxxxx.....",
+  "................",
+  "................",
+];
+
+const OBAKE = [
+  "................",
+  "................",
+  "....xxxxxx......",
+  "...xeeeeeex.....",
+  "..xeexeexeex....",
+  "..xeeeeeeeex....",
+  "..xeexxxxeex....",
+  "..xeeeeeeeex....",
+  "..xeeeeeeeex....",
+  "..xeeeeeeeex....",
+  "..xexeexeexx....",
+  "..xx.xx.xx......",
+  "................",
+  "................",
+  "................",
+  "................",
+];
+
+const USAGI = [
+  "................",
+  "................",
+  "....x..x........",
+  "...xexxex.......",
+  "...xexxex.......",
+  "...xeeeex.......",
+  "...xexxex.......",
+  "..xeeeeeex......",
+  "..xeeeeeeexx....",
+  "..xeeeeeeeeex...",
+  "..xeeexxeeeex...",
+  "...xeex.xeex....",
+  "................",
+  "................",
+  "................",
+  "................",
+];
+
 export interface SpriteSet {
   readonly tiles: ReadonlyMap<Tile, HTMLCanvasElement>;
   /** The hero pair for a title tier (0..5); built lazily and cached. */
   heroFor(tier: number): readonly [HTMLCanvasElement, HTMLCanvasElement];
   readonly roles: Readonly<Record<string, readonly [HTMLCanvasElement, HTMLCanvasElement]>>;
+  readonly critters: Readonly<Record<string, HTMLCanvasElement>>;
 }
 
 export function buildSprites(): SpriteSet {
@@ -590,5 +686,6 @@ export function buildSprites(): SpriteSet {
       return cached;
     },
     roles: { artisan: pair("a"), merchant: pair("o"), broker: pair("v"), treasury: pair("m") },
+    critters: { slime: draw(SLIME), scorpion: draw(SCORPION), yukidaruma: draw(YUKIDARUMA), obake: draw(OBAKE), usagi: draw(USAGI) },
   };
 }

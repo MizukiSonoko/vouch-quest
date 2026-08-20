@@ -60,6 +60,22 @@ export class ParticleField {
     }
   }
 
+  /** Falling festival confetti in world pixels. */
+  confetti(x: number, y: number): void {
+    const colors = ["#ff6a5e", "#ffd75e", "#6ad2ff", "#a5ff8a", "#ff9de2", "#ffffff"];
+    this.list.push({
+      x,
+      y,
+      vx: (Math.random() - 0.5) * 0.8,
+      vy: 0.4 + Math.random() * 0.6,
+      life: 1600,
+      maxLife: 1600,
+      color: colors[Math.floor(Math.random() * colors.length)] ?? "#ffd75e",
+      size: 3,
+      gravity: 0.01,
+    });
+  }
+
   update(dt: number): void {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const p = this.list[i];
@@ -250,6 +266,84 @@ export class Weather {
       }
       ctx.fillStyle = d.color;
       ctx.fillRect(d.x, d.y, d.size, d.size);
+      ctx.globalAlpha = 1;
+    }
+  }
+}
+
+// --- the sky: shooting stars, aurora over the snowfields, the odd rainbow -------
+
+interface Streak {
+  x: number;
+  y: number;
+  life: number;
+}
+
+export class SkyShow {
+  private readonly stars: Streak[] = [];
+  private starTimer = 8000;
+
+  update(dt: number, night: boolean): void {
+    if (night) {
+      this.starTimer -= dt;
+      if (this.starTimer <= 0) {
+        this.starTimer = 9000 + Math.random() * 22000;
+        this.stars.push({ x: 100 + Math.random() * 700, y: 20 + Math.random() * 120, life: 700 });
+      }
+    }
+    for (let i = this.stars.length - 1; i >= 0; i--) {
+      const s = this.stars[i];
+      if (!s) continue;
+      s.life -= dt;
+      s.x += dt * 0.35;
+      s.y += dt * 0.18;
+      if (s.life <= 0) this.stars.splice(i, 1);
+    }
+  }
+
+  render(ctx: CanvasRenderingContext2D, w: number, night: boolean, snowBiome: boolean): void {
+    for (const s of this.stars) {
+      ctx.globalAlpha = Math.min(1, s.life / 400);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(s.x - 26, s.y - 13);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // Aurora: slow translucent bands over the snowfields at night.
+    if (night && snowBiome) {
+      const t = performance.now() / 3000;
+      for (let band = 0; band < 3; band++) {
+        ctx.globalAlpha = 0.10 + 0.05 * Math.sin(t + band);
+        ctx.fillStyle = band % 2 === 0 ? "#5affc3" : "#b48aff";
+        ctx.beginPath();
+        for (let x = 0; x <= w; x += 24) {
+          const y = 40 + band * 34 + Math.sin(t + x / 90 + band * 2) * 18;
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        for (let x = w; x >= 0; x -= 24) {
+          const y = 40 + band * 34 + Math.sin(t + x / 90 + band * 2) * 18 + 22;
+          ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    // A rainbow hour, now and then, while the sun is up.
+    if (!night && Math.floor(Date.now() / 3_600_000) % 5 === 0) {
+      const colors = ["#e05050", "#e0a050", "#e0d850", "#50c060", "#5080e0", "#8a5ae0"];
+      colors.forEach((c, i) => {
+        ctx.globalAlpha = 0.16;
+        ctx.strokeStyle = c;
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.arc(w - 160, 180, 130 - i * 7, Math.PI, Math.PI * 2);
+        ctx.stroke();
+      });
       ctx.globalAlpha = 1;
     }
   }
