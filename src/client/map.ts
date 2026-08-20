@@ -5,6 +5,7 @@
 // hash. Pure data — no DOM, no Math.random, so it is unit-testable.
 
 import type { AgentView, Snapshot } from "../shared";
+import { AFTERLIFE } from "./life";
 import { friendlyPairs } from "./shop";
 
 export const MAP_W = 240;
@@ -56,6 +57,8 @@ export const enum Tile {
   BuildingRoof = 38,
   Station = 39,
   Poster = 40,
+  HospitalRoof = 41,
+  HospitalDoor = 42,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -91,6 +94,8 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.BuildingRoof,
   Tile.Station,
   Tile.Poster,
+  Tile.HospitalRoof,
+  Tile.HospitalDoor,
 ]);
 
 /** Village slot origins (top-left), a 5x6 lattice spaced for the largest plot (20x15). */
@@ -126,6 +131,8 @@ export interface Village {
   readonly hall: readonly [number, number];
   readonly mint: readonly [number, number];
   readonly court: readonly [number, number];
+  /** The hospital door, once the settlement is at least a town. */
+  readonly hospital: readonly [number, number] | null;
   /** Interior spawn points for resident NPCs. */
   readonly spots: readonly (readonly [number, number])[];
 }
@@ -409,6 +416,31 @@ function carveVillage(
   const mint = doors.mint ?? ([vx + 7, vy + 3] as const);
   const court = doors.court ?? ([vx + 12, vy + 3] as const);
 
+  // Towns and cities staff a hospital (the cross-marked house of healing).
+  let hospital: readonly [number, number] | null = null;
+  if (tier >= 1) {
+    for (let tries = 0; tries < 200 && !hospital; tries++) {
+      const bx = vx + 2 + Math.floor(rng() * Math.max(1, w - 6));
+      const by = vy + 2 + Math.floor(rng() * Math.max(1, h - 8));
+      if (overlapsProtected(bx, by, 3, 3)) continue;
+      const built = drawBuilding(bx, by, 3, 2, 1, { roof: Tile.HospitalRoof, wall: Tile.HouseWall, door: Tile.HospitalDoor, window: Tile.WallWindow });
+      for (const [cx2, cy2] of built.cells) protectedCells.add(key(cx2, cy2));
+      protectedCells.add(key(built.door[0], built.door[1] + 1));
+      set(tiles, built.door[0], built.door[1] + 1, g1);
+      hospital = built.door;
+    }
+    if (!hospital) {
+      // The blob was too cramped for a clean fit: build it beside the hall anyway.
+      const bx = Math.max(vx + 1, Math.min(hall[0] + 2, vx + w - 4));
+      const by = Math.max(vy + 1, hall[1] + 2);
+      const built = drawBuilding(bx, by, 3, 2, 1, { roof: Tile.HospitalRoof, wall: Tile.HouseWall, door: Tile.HospitalDoor, window: Tile.WallWindow });
+      for (const [cx2, cy2] of built.cells) protectedCells.add(key(cx2, cy2));
+      protectedCells.add(key(built.door[0], built.door[1] + 1));
+      set(tiles, built.door[0], built.door[1] + 1, g1);
+      hospital = built.door;
+    }
+  }
+
   // Houses: FREE placement — overlap is allowed, so clusters, terraces, and alleys
   // emerge. A door swallowed by a later extension just means the family built on.
   const ROOFS: readonly Tile[] = [Tile.HouseRoof, Tile.RoofGreen, Tile.RoofBlue, Tile.RoofBrown];
@@ -544,7 +576,7 @@ function carveVillage(
     set(tiles, station[0] + 1, station[1], Tile.Pavement);
   }
 
-  return { x: vx, y: vy, w, h, biome, cells, tier, station, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, spots };
+  return { x: vx, y: vy, w, h, biome, cells, tier, station, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, hospital, spots };
 }
 
 export function buildMap(snapshot: Snapshot): WorldMap {
@@ -586,7 +618,7 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     }
   }
 
-  const villages = snapshot.regions.map((region, i) => {
+  const villages = snapshot.regions.filter((r) => r.id !== AFTERLIFE).map((region, i) => {
     const residents = snapshot.agents.filter((a) => a.region === region.id && a.role !== "treasury").length;
     const treasury = snapshot.agents.find((a) => a.id === `treasury@${region.id}`)?.balances.currency ?? 0;
     const carved = carveVillage(tiles, region.id, i, residents, devTier(residents, treasury));

@@ -670,6 +670,8 @@ export function buildSprites(): SpriteSet {
     [Tile.BuildingRoof, draw(BUILDING_ROOF)],
     [Tile.Station, draw(STATION)],
     [Tile.Poster, draw(POSTER)],
+    [Tile.HospitalRoof, draw(ROOF.map((row, y) => (y >= 5 && y <= 9 ? `${row.slice(0, 5)}rrrrrr${row.slice(11)}`.slice(0, 16) : row)).map((r) => r.replaceAll("r", "e").replaceAll("R", "e")).map((row, y) => (y >= 5 && y <= 9 ? `${row.slice(0, 7)}rr${row.slice(9)}` : y >= 6 && y <= 8 ? row : row)).map((row, y) => (y === 7 ? `${row.slice(0, 5)}rrrrrr${row.slice(11)}` : row)))],
+    [Tile.HospitalDoor, draw(doorWith("r"))],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();

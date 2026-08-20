@@ -28,6 +28,7 @@ interface Agent {
   balances: { currency: number };
   trust: number;
   reputation: number;
+  admittedAtSeq: number;
 }
 interface Region {
   id: string;
@@ -72,6 +73,14 @@ const SETTLERS = ["Hana", "Taro", "Suzu", "Gonta", "Mimi", "Roku", "Chiyo", "Bun
 const WARES = ["bread", "fish", "lantern", "rope", "boots", "tea", "brick", "gear"];
 const JUNK = ["kuzutetsu", "nisegane", "garakuta"];
 const TOWNS = ["ichiba", "minato", "kaido", "hoshi", "takumi", "yama", "izumi", "sakura"];
+const AFTERLIFE = "anoyo";
+const BYOKI = "byoki";
+const CHILD_NAMES = ["Kotaro", "Hanako", "Jiro", "Momoko", "Shinta", "Sakurako", "Anzu", "Mame", "Chibi", "Tonbo"];
+const bareName = (agentId: string): string => (agentId.split("@")[0] ?? "").replace(/\d+$/, "");
+const isBotFolk = (agentId: string): boolean => {
+  const n = bareName(agentId);
+  return SETTLERS.includes(n) || CHILD_NAMES.includes(n);
+};
 
 // --- constitutions: presets over the raw governance primitive -------------------
 
@@ -114,28 +123,47 @@ async function ensureRegistered(client: VouchClient, principal: string): Promise
 
 // --- the bank's ledger, folded straight out of the world log --------------------
 
-/** Net position per counterparty NAME: positive = they owe the bank. */
-async function bankLedger(client: VouchClient, bankName: string): Promise<Map<string, number>> {
-  const ledger = new Map<string, number>();
+/** The whole world log, fetched once per run and shared by every routine. */
+async function fetchWholeLog(client: VouchClient): Promise<LogEvent[]> {
   const events: LogEvent[] = [];
   for (;;) {
     const page = (await client.log(events.length)) as LogEvent[];
     events.push(...page);
     if (page.length < 1000) break;
   }
+  return events;
+}
+
+/** Net position per counterparty AGENT id: positive = they owe the bank. */
+function bankLedger(events: readonly LogEvent[], bankName: string): Map<string, number> {
+  const ledger = new Map<string, number>();
   for (const e of events) {
     if (e.type !== "economy.settled") continue;
     const entries = (e.payload["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
     const bank = entries.find((x) => x.agentId?.startsWith(`${bankName}@`));
     if (!bank || typeof bank.currencyDelta !== "number") continue;
     const other = entries.find((x) => x.agentId && !x.agentId.startsWith(`${bankName}@`) && !x.agentId.startsWith("treasury@") && (x.currencyDelta ?? 0) * bank.currencyDelta < 0);
-    const who = other?.agentId?.split("@")[0];
+    const who = other?.agentId;
     if (!who) continue;
-    // Bank paid out => their debt grows; bank received => debt shrinks.
     ledger.set(who, (ledger.get(who) ?? 0) - bank.currencyDelta);
   }
   return ledger;
 }
+
+/** All vouch edges (from>to) in the log — mutual edges are marriages. */
+function vouchEdges(events: readonly LogEvent[]): Set<string> {
+  const edges = new Set<string>();
+  for (const e of events) {
+    if (e.type !== "agent.vouched") continue;
+    const from = e.payload["from"];
+    const to = e.payload["to"];
+    if (typeof from === "string" && typeof to === "string") edges.add(`${from}>${to}`);
+  }
+  return edges;
+}
+
+const isMarried = (edges: Set<string>, id: string, others: readonly Agent[]): boolean =>
+  others.some((o) => edges.has(`${id}>${o.id}`) && edges.has(`${o.id}>${id}`));
 
 // --- shared bootstrap: found a town, or get hired into a bot-owned one ----------
 
@@ -161,15 +189,14 @@ async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promis
 
 // --- one waking resident --------------------------------------------------------
 
-async function act(name: Name): Promise<void> {
+async function act(name: Name, world: { agents: Agent[]; regions: Region[]; ledger: Map<string, number>; edges: Set<string> }): Promise<void> {
   const client = clientFor(name);
-  const agents = (await client.agents()) as Agent[];
-  const regions = (await client.regions()) as Region[];
-  const me = agents.find((a) => a.id.startsWith(`${name}@`) && a.role !== "treasury");
+  const { agents, regions, ledger, edges } = world;
+  const me = agents.find((a) => a.id.startsWith(`${name}@`) && a.role !== "treasury" && a.region !== AFTERLIFE);
   if (!me) return bootstrap(name, agents, regions);
   await ensureRegistered(client, me.id);
 
-  const others = agents.filter((a) => a.role !== "treasury" && !a.id.startsWith(`${name}@`));
+  const others = agents.filter((a) => a.role !== "treasury" && !a.id.startsWith(`${name}@`) && a.region !== AFTERLIFE);
   // Currency cannot cross unrecognized borders on this node, so money moves
   // between neighbors — bots trade locally and travel to settle debts.
   const neighbors = others.filter((a) => a.region === me.region);
@@ -180,8 +207,7 @@ async function act(name: Name): Promise<void> {
   // Everyone but the swindler honors their debts (principal + 10%) when they can —
   // traveling to the bank's city to pay, since money cannot cross borders.
   if (name !== "Kuro" && name !== "Ginko" && bankAgent) {
-    const ledger = await bankLedger(client, "Ginko");
-    const debt = ledger.get(name) ?? 0;
+    const debt = ledger.get(me.id) ?? 0;
     if (debt > 0 && me.balances.currency > debt + 8) {
       if (bankAgent.region !== me.region) {
         say(name, `travels to ${bankAgent.region} to settle a debt`, await client.migrate(me.id, bankAgent.region));
@@ -196,16 +222,15 @@ async function act(name: Name): Promise<void> {
 
   // The banker's round: judge credit from the ledger, lend to the worthy poor.
   if (name === "Ginko") {
-    const ledger = await bankLedger(client, "Ginko");
     const deadbeats = [...ledger.entries()].filter(([, v]) => v > 15).map(([k]) => k);
     if (deadbeats.length > 0) say(name, `blacklist: ${deadbeats.join(", ")}`);
-    const goodPayers = others.filter((a) => (ledger.get(a.id.split("@")[0] ?? "") ?? 0) <= 0 && a.reputation >= 2 && a.trust < 8);
+    const goodPayers = others.filter((a) => (ledger.get(a.id) ?? 0) <= 0 && a.reputation >= 2 && a.trust < 8);
     if (goodPayers.length > 0 && rand() < 0.5) {
       const star = pick(goodPayers);
       say(name, `rates ${star.id} creditworthy`, await client.vouch(me.id, star.id, 2));
       await sleep(1400);
     }
-    const applicants = neighbors.filter((a) => a.balances.currency < 15 && !deadbeats.includes(a.id.split("@")[0] ?? ""));
+    const applicants = neighbors.filter((a) => a.balances.currency < 15 && !deadbeats.includes(a.id));
     if (applicants.length > 0 && me.balances.currency > 40) {
       const debtor = pick(applicants);
       const loan = 10 + Math.floor(rand() * 11);
@@ -258,6 +283,35 @@ async function act(name: Name): Promise<void> {
       say(name, `proposes a new constitution for ${home.id}: ${regime}`,
         await client.propose(me.id, home.id, { policy: "governance", value: buildGovernance(regime, residents) }));
       await sleep(1400);
+    }
+  }
+
+  // Births: where married couples live, the town welcomes children (population grows).
+  if (rand() < 0.35) {
+    for (const town of owned) {
+      if (town.id === AFTERLIFE) continue;
+      const townFolk = agents.filter((a) => a.region === town.id && a.role !== "treasury" && a.region !== AFTERLIFE);
+      const couples = townFolk.filter((a) => isMarried(edges, a.id, townFolk)).length / 2;
+      const children = townFolk.filter((a) => CHILD_NAMES.includes(bareName(a.id))).length;
+      if (couples >= 1 && children < couples * 2 && townFolk.length < 20) {
+        let childName = "";
+        for (const base of CHILD_NAMES) {
+          for (let n = 0; n < 4; n++) {
+            const candidate = n === 0 ? base : `${base}${n + 1}`;
+            if (!agents.some((a) => a.id === `${candidate}@${town.id}`)) {
+              childName = candidate;
+              break;
+            }
+          }
+          if (childName) break;
+        }
+        if (childName) {
+          say(name, `welcomes baby ${childName} in ${town.id}`,
+            await client.admit(name, `${childName}@${town.id}`, town.id, "artisan", 10));
+          await sleep(1400);
+        }
+        break;
+      }
     }
   }
 
@@ -342,6 +396,87 @@ async function act(name: Name): Promise<void> {
   }
 }
 
+// --- villager citizens: every bot-born settler and child lives a full life ------
+
+async function villagerAct(
+  agent: Agent,
+  world: { agents: Agent[]; regions: Region[]; ledger: Map<string, number>; edges: Set<string>; logLen: number; items: Item[] },
+): Promise<void> {
+  const client = clientFor(agent.id);
+  await ensureRegistered(client, agent.id);
+  const { agents, regions, ledger, edges, logLen, items } = world;
+  const neighbors = agents.filter((a) => a.region === agent.region && a.role !== "treasury" && a.id !== agent.id && a.region !== AFTERLIFE);
+  const age = logLen - agent.admittedAtSeq;
+  const myByoki = items.find((it) => it.owner === agent.id && it.kind === BYOKI);
+
+  try {
+    // The end of a long life (or a hard illness): the road to the afterlife.
+    if (regions.some((r) => r.id === AFTERLIFE) && ((age > 900 && rand() < 0.1) || (myByoki && age > 400 && rand() < 0.12))) {
+      say(agent.id, "breathes their last and departs", await client.migrate(agent.id, AFTERLIFE));
+      return;
+    }
+    // The sick seek the hospital while they can afford it.
+    if (myByoki && agent.balances.currency > 5) {
+      say(agent.id, "visits the hospital", await client.transfer(agent.id, `treasury@${agent.region}`, 3));
+      await sleep(1300);
+      say(agent.id, "is cured", await client.transferItem(agent.id, myByoki.id, `treasury@${agent.region}`));
+      return;
+    }
+    const roll = rand();
+    if (roll < 0.06 && age > 150) {
+      // A cold is going around.
+      say(agent.id, "catches a cold", await client.mintItem(agent.id, `${BYOKI}${Math.random().toString(36).slice(2, 7)}`, BYOKI, agent.id));
+    } else if (roll < 0.3 && !isMarried(edges, agent.id, neighbors) && age > 200) {
+      // Courtship: answer a suitor first; otherwise court a single neighbor.
+      const suitor = neighbors.find((o) => edges.has(`${o.id}>${agent.id}`) && !isMarried(edges, o.id, neighbors));
+      const beloved = suitor ?? neighbors.filter((o) => !isMarried(edges, o.id, neighbors) && !CHILD_NAMES.includes(bareName(o.id)))[0];
+      if (beloved) say(agent.id, `courts ${beloved.id}`, await client.vouch(agent.id, beloved.id, 3));
+    } else if (roll < 0.55 && neighbors.length > 0 && agent.balances.currency > 6) {
+      const to = neighbors[Math.floor(rand() * neighbors.length)];
+      if (to) say(agent.id, `pays ${to.id}`, await client.transfer(agent.id, to.id, 1 + Math.floor(rand() * 4)));
+    } else if (roll < 0.7 && neighbors.length > 0) {
+      const to = neighbors[Math.floor(rand() * neighbors.length)];
+      if (to) say(agent.id, `chats up ${to.id}`, await client.vouch(agent.id, to.id, 1));
+    } else if (roll < 0.78) {
+      const target = regions.filter((r) => r.lifecycle === "active" && r.id !== agent.region && r.id !== AFTERLIFE);
+      const t2 = target[Math.floor(rand() * target.length)];
+      if (t2) say(agent.id, `moves to ${t2.id}`, await client.migrate(agent.id, t2.id));
+    }
+  } catch (error) {
+    say(agent.id, "stumbled:", error instanceof Error ? error.message : String(error));
+  }
+  await sleep(1300);
+}
+
+// --- the run ---------------------------------------------------------------------
+
+const boot = clientFor("Momo");
+const worldAgents = (await boot.agents()) as Agent[];
+const worldRegions = (await boot.regions()) as Region[];
+
+// The afterlife must exist before anyone can pass on. Enma keeps its gate.
+if (!worldRegions.some((r) => r.id === AFTERLIFE)) {
+  const enma = clientFor("Enma");
+  await ensureRegistered(enma, "Enma");
+  console.log("[Enma] opens the gate:", JSON.stringify(await enma.found("Enma", AFTERLIFE, "Anoyo")));
+  await sleep(1200);
+}
+
+const events = await fetchWholeLog(boot);
+const world = {
+  agents: worldAgents,
+  regions: worldRegions,
+  ledger: bankLedger(events, "Ginko"),
+  edges: vouchEdges(events),
+  logLen: events.length,
+  items: (await boot.items()) as Item[],
+};
+
 const awake = [...TROUPE].sort(() => rand() - 0.5).slice(0, 4 + Math.floor(rand() * 2));
 console.log(`awake: ${awake.join(", ")}`);
-for (const p of awake) await act(p);
+for (const p of awake) await act(p, world);
+
+const villagers = worldAgents.filter((a) => a.role !== "treasury" && a.region !== AFTERLIFE && isBotFolk(a.id));
+const wakingFolk = villagers.sort(() => rand() - 0.5).slice(0, 5 + Math.floor(rand() * 3));
+console.log(`villagers about: ${wakingFolk.map((a) => a.id).join(", ") || "(none yet)"}`);
+for (const v of wakingFolk) await villagerAct(v, world);

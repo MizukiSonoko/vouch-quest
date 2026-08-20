@@ -1,6 +1,7 @@
 // The village newspaper: world log events → Dragon Quest-style Japanese lines.
 
 import type { LogEventView } from "../shared";
+import { AFTERLIFE, BYOKI, isChildName } from "./life";
 import { classifyRegime, type GovernanceValue, REGIME_JA } from "./politics";
 import { kindName } from "./shop";
 
@@ -34,20 +35,29 @@ export function eventToMessage(event: LogEventView): string {
   switch (event.type) {
     case "region.founded":
       return `あたらしいむら「${str(p, "region.id", "regionId")}」が たんじょうした!`;
-    case "agent.admitted":
-      return `${str(p, "admission.id", "id")}が むらの なかまに くわわった!`;
-    case "agent.migrated":
+    case "agent.admitted": {
+      const id = str(p, "admission.id", "id");
+      if (isChildName(id)) return `${str(p, "admission.region")}に あかちゃんが うまれた! なまえは ${id.split("@")[0]}!`;
+      return `${id}が むらの なかまに くわわった!`;
+    }
+    case "agent.migrated": {
+      if (str(p, "toRegion") === AFTERLIFE) return `${str(p, "agentId")}が てんに めされた… やすらかに。`;
       return `${str(p, "agentId")}は ${str(p, "toRegion")}へ ひっこした。`;
+    }
     case "agent.vouched":
       return `${str(p, "from")}は ${str(p, "to")}を ほしょうした!`;
     case "economy.settled":
       return settledLine(p);
     case "economy.minted":
       return `どこからともなく おかねが うまれた…`;
-    case "item.minted":
+    case "item.minted": {
+      if (str(p, "kind") === BYOKI) return `${str(p, "owner")}が びょうきに かかった… おだいじに。`;
       return `${str(p, "owner")}は 「${kindName(str(p, "kind", "itemKind"))}」を てにいれた!`;
-    case "item.transferred":
+    }
+    case "item.transferred": {
+      if (str(p, "to").startsWith("treasury@")) return `${str(p, "from")}は びょういんで てあてを うけた。`;
       return `${str(p, "from")}は ${str(p, "to")}に どうぐを ゆずった。`;
+    }
     case "region.institution.changed": {
       const policy = str(p, "change.policy");
       const rid = str(p, "regionId");

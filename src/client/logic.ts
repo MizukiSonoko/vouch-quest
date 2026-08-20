@@ -31,7 +31,7 @@ export const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("mintItem"), itemKind: z.string().min(1).max(32), owner: identifier }),
   z.object({ kind: z.literal("amendMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
   z.object({ kind: z.literal("amendGovernance"), regionId, regime: z.enum(REGIMES as [Regime, ...Regime[]]) }),
-  z.object({ kind: z.literal("buyItem"), regionId, ware: z.string().min(1).max(32) }),
+  z.object({ kind: z.literal("buyItem"), regionId, ware: z.string().min(1).max(32), price: z.number().int().min(1).max(1000).optional() }),
   z.object({ kind: z.literal("amendDiplomacy"), regionId, target: regionId, stance: z.enum(["absorb", "map", "reexamine", "reject"]) }),
   z.object({ kind: z.literal("proposeDiplomacy"), regionId, target: regionId, stance: z.enum(["absorb", "map", "reexamine", "reject"]) }),
   z.object({ kind: z.literal("proposeMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
@@ -144,11 +144,14 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
       const region = regions.find((r) => r.id === action.regionId);
       if (!region) return { ok: false, reason: "unknown-region" };
       // Pay first — into the village treasury, through the real (taxed) transfer path.
+      // Festivals discount the asking price; the price is the game's convention, the
+      // transfer is what actually happens.
+      const price = action.price ?? ware.price;
       const paid = await asAgent(wallet, hero, (agent) => ({
         kind: "transfer",
         from: agent,
         to: "treasury@" + action.regionId,
-        amount: ware.price,
+        amount: price,
       }));
       if (!paid.ok) return paid;
       // Then mint under the village's own institution: the signer the rule names.
@@ -156,7 +159,7 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
       const command = { kind: "mint-item", itemId: newItemId(ware.kind), itemKind: ware.kind, owner: hero.agentId };
       const minted = minting === "owner" ? await asOwner(wallet, hero, command) : await asAgent(wallet, hero, () => command);
       if (!minted.ok) return { ok: false, reason: "だいきんは はらったのに しなものが でてこない… (" + minted.reason + ")" };
-      return { ok: true, detail: { ware: ware.kind, price: ware.price } };
+      return { ok: true, detail: { ware: ware.kind, price } };
     }
     case "amendDiplomacy":
     case "proposeDiplomacy": {

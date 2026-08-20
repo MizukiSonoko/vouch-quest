@@ -7,6 +7,7 @@
 import type { AgentView, ItemView, LogEventView, Snapshot } from "../shared";
 import { dayPhase, ParticleField, SkyShow, Weather, Wildlife } from "./ambience";
 import { npcLines } from "./dialogue";
+import { AFTERLIFE, BYOKI, foldLife, isDead, WeddingBook } from "./life";
 import { eventToMessage } from "./feed";
 import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, villageContains, type WorldMap } from "./map";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
@@ -54,6 +55,7 @@ interface Tourist {
   home: Village;
 }
 let tourists: Tourist[] = [];
+let weddingBook = new WeddingBook();
 
 // たびのきろく — the personal travel journal (presentation-side, per browser).
 const JOURNAL_KEY = "vouchquest.journal";
@@ -287,6 +289,15 @@ function celebrate(): void {
       case "agent.vouched": {
         const at = villageCenterPx(regionOfAgent(pick(p, "to")));
         if (at) particles.sparkle(at[0], at[1], "#ff9de2");
+        const from = pick(p, "from");
+        const to = pick(p, "to");
+        if (from && to) {
+          const couple = weddingBook.vouch(from, to);
+          if (couple) {
+            extraExtra(`ごうがい! ${couple[0]}と ${couple[1]}が けっこんした!`);
+            if (at) particles.firework(at[0], at[1]);
+          }
+        }
         break;
       }
       case "item.minted":
@@ -298,6 +309,12 @@ function celebrate(): void {
       case "agent.admitted":
       case "agent.migrated": {
         const rid = pick(p, "admission.region", "toRegion");
+        if (e.type === "agent.migrated" && rid === AFTERLIFE) {
+          // A quiet passing: a somber banner and a single low bell.
+          banner = { text: eventToMessage(e), until: now + 4200 };
+          se("cancel");
+          break;
+        }
         const at = villageCenterPx(rid);
         if (at) particles.sparkle(at[0], at[1], "#a5ff8a");
         banner = { text: eventToMessage(e), until: now + 3200 };
@@ -335,7 +352,7 @@ function celebrate(): void {
 /** The かわらばん: real headlines that scroll along the top of the screen. */
 function rebuildTicker(): void {
   if (!snapshot) return;
-  const folk = snapshot.agents.filter((a) => a.role !== "treasury");
+  const folk = snapshot.agents.filter((a) => a.role !== "treasury" && !isDead(a.region));
   const richest = [...folk].sort((a, b) => b.balances.currency - a.balances.currency)[0];
   const trusted = [...folk].sort((a, b) => b.trust - a.trust)[0];
   const newest = snapshot.regions[snapshot.regions.length - 1];
@@ -344,7 +361,7 @@ function rebuildTicker(): void {
     richest ? `ちょうじゃ: ${richest.id} (${richest.balances.currency}G)` : "",
     trusted && trusted.trust > 0 ? `しんらいNo.1: ${trusted.id} (しんらい${trusted.trust})` : "",
     newest ? `さいしんのむら: ${newest.displayName}` : "",
-    `むら${snapshot.regions.length} / じゅうみん${folk.length}にん / できごと${snapshot.logLength}`,
+    `むら${snapshot.regions.filter((r) => r.id !== AFTERLIFE).length} / じゅうみん${folk.length}にん / けっこん${weddingBook.marriages}くみ / できごと${snapshot.logLength}`,
   ].filter((t) => t.length > 0);
   tickerText = items.join("  ◆  ");
 }
@@ -683,20 +700,22 @@ function shopMenu(village: Village): void {
     return;
   }
   const gold = heroAgent()?.balances.currency ?? 0;
+  const sale = festivals.has(region.id);
+  const priceOf = (base: number): number => (sale ? Math.max(1, Math.ceil(base * 0.8)) : base);
   ui.push(
-    new Menu(`${region.displayName}の どうぐや (もちがね ${gold}G)`, [
-      ...CATALOG.map((w) => ({ label: `${w.name}  ${w.price}G`, value: w.kind, disabled: gold < w.price })),
+    new Menu(`${region.displayName}の どうぐや ${sale ? "★まつりセール★" : ""}(もちがね ${gold}G)`, [
+      ...CATALOG.map((w) => ({ label: `${w.name}  ${priceOf(w.price)}G${sale ? ` (もと${w.price}G)` : ""}`, value: w.kind, disabled: gold < priceOf(w.price) })),
       { label: "やめる", value: "cancel" },
     ], (kind) => {
       if (kind === "cancel") return ui.clear();
       const ware = CATALOG.find((w) => w.kind === kind);
       if (!ware) return ui.clear();
       ui.push(
-        new Menu(`${ware.name} — ${ware.blurb} ${ware.price}Gで かう?`, [
+        new Menu(`${ware.name} — ${ware.blurb} ${priceOf(ware.price)}Gで かう?`, [
           { label: "かう", value: "yes" },
           { label: "やめる", value: "no" },
         ], (v) => {
-          if (v === "yes") void runAct({ kind: "buyItem", regionId: region.id, ware: ware.kind }, `${ware.name}を かう`);
+          if (v === "yes") void runAct({ kind: "buyItem", regionId: region.id, ware: ware.kind, price: priceOf(ware.price) }, `${ware.name}を かう`);
           else ui.pop();
         }, () => ui.pop()),
       );
@@ -772,6 +791,52 @@ function posterMenu(village: Village): void {
   );
 }
 
+/** びょういん — the house of healing: real fees, real recovery. */
+function hospitalMenu(village: Village): void {
+  const life = foldLife(allEvents);
+  const myByoki = myItems().find((i) => i.kind === BYOKI);
+  const fee = 3;
+  const entries = [
+    { label: myByoki ? `てあてを うける (${fee}G)` : "てあてを うける (けんこうだ)", value: "cure", disabled: !myByoki },
+    { label: "むらの けんこうきろく", value: "stats" },
+    { label: "やめる", value: "cancel" },
+  ];
+  ui.push(
+    new Menu(`${village.displayName} びょういん`, entries, (value) => {
+      if (value === "cure" && myByoki) {
+        void (async () => {
+          ui.clear();
+          log.push("てあてを うけている…");
+          const paid = await postAct({ kind: "transfer", to: `treasury@${village.regionId}`, amount: fee });
+          if (!paid.ok) {
+            se("error");
+            log.push(`はらえなかった… (${paid.reason})`);
+            return;
+          }
+          const cured = await postAct({ kind: "transferItem", itemId: myByoki.id, to: `treasury@${village.regionId}` });
+          if (cured.ok) {
+            se("fanfare");
+            log.push("びょうきが なおった! からだが かるい!");
+          } else {
+            log.push(`てあてに しっぱいした… (${cured.reason})`);
+          }
+          await refreshWorld(false);
+          await syncEvents(true);
+          checkQuests(true);
+          celebrate();
+        })();
+      } else if (value === "stats") {
+        ui.push(new Info("けんこうきろく", [
+          `これまでの びょうき: ${life.sick}けん`,
+          `うまれた いのち: ${life.births}にん`,
+          `てんに めされた いのち: ${life.deaths}にん`,
+          `むすばれた ふうふ: ${life.book.marriages}くみ`,
+        ], () => ui.pop()));
+      } else ui.clear();
+    }, () => ui.clear()),
+  );
+}
+
 /** 駅 — ride the train between cities (movement is presentation; no world state moves). */
 function stationMenu(village: Village): void {
   const destinations = (map?.villages ?? []).filter((v) => v.station && v.regionId !== village.regionId);
@@ -821,7 +886,7 @@ function questJournal(): void {
 function worldRecords(): void {
   const m = snapshot;
   if (!m) return;
-  const folk = m.agents.filter((a) => a.role !== "treasury");
+  const folk = m.agents.filter((a) => a.role !== "treasury" && !isDead(a.region));
   const byGold = [...folk].sort((a, b) => b.balances.currency - a.balances.currency).slice(0, 3);
   const byTrust = [...folk].sort((a, b) => b.trust - a.trust).slice(0, 3);
   const byPeople = [...m.regions]
@@ -952,6 +1017,10 @@ function interact(): void {
     const village = map.villages.find((v) => v.poster[0] === fx && v.poster[1] === fy);
     if (village) return posterMenu(village);
   }
+  if (tile === Tile.HospitalDoor) {
+    const village = map.villages.find((v) => v.hospital && v.hospital[0] === fx && v.hospital[1] === fy);
+    if (village) return hospitalMenu(village);
+  }
   if (tile === Tile.Station) {
     const village = map.villages.find((v) => v.station && v.station[0] === fx && v.station[1] === fy);
     if (village) return stationMenu(village);
@@ -1039,6 +1108,8 @@ const MINI_COLORS: Record<number, string> = {
   [Tile.BuildingWall]: "#9a9aa8",
   [Tile.BuildingRoof]: "#3a3a44",
   [Tile.Station]: "#c23a2e",
+  [Tile.HospitalRoof]: "#f0f0f0",
+  [Tile.HospitalDoor]: "#c23a2e",
 };
 const MINI_SCALE = 3;
 let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;
@@ -1752,6 +1823,7 @@ void (async () => {
   try {
     await refreshWorld(true);
     allEvents = await fetchAllLog();
+    weddingBook = foldLife(allEvents).book;
     checkQuests(false);
     rebuildTicker();
   } catch (error) {
