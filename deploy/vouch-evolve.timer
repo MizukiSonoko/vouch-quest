@@ -1,9 +1,9 @@
 [Unit]
-Description=evolve the vouch-quest genome every 3 hours
+Description=evolve the vouch-quest genome every hour
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=3h
+OnUnitActiveSec=1h
 Persistent=true
 
 [Install]
