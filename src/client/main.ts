@@ -727,6 +727,61 @@ function regimePicker(regionId: string, mode: "amend" | "propose"): void {
 }
 
 /** 役場 — residency and the shape of power. */
+/** むらの きろく と いれいひ: the village's history and its dead, from the log.
+ * The dead are those whose agent id was born here (name@region) and whose last
+ * road led to the afterlife. Every count is folded from real events. */
+function memorialLines(regionId: string, displayName: string): string[] {
+  const dead: { id: string; seq: number }[] = [];
+  const trades = new Map<string, number>();
+  const vouchedIn = new Map<string, number>();
+  for (const e of allEvents) {
+    const p = e.payload;
+    if (e.type === "agent.migrated" && p["toRegion"] === AFTERLIFE) {
+      const id = typeof p["agentId"] === "string" ? p["agentId"] : "";
+      if (id.endsWith(`@${regionId}`)) dead.push({ id, seq: e.seq });
+    } else if (e.type === "economy.settled") {
+      for (const en of (p["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? []) {
+        if (en.agentId && (en.currencyDelta ?? 0) !== 0 && !en.agentId.startsWith("treasury@")) {
+          trades.set(en.agentId, (trades.get(en.agentId) ?? 0) + 1);
+        }
+      }
+    } else if (e.type === "agent.vouched") {
+      if (typeof p["to"] === "string") vouchedIn.set(p["to"] as string, (vouchedIn.get(p["to"] as string) ?? 0) + 1);
+    }
+  }
+  const region = snapshot?.regions.find((r) => r.id === regionId);
+  const v = map?.villages.find((x) => x.regionId === regionId);
+  const pop = snapshot?.agents.filter((a2) => a2.region === regionId && a2.role !== "treasury").length ?? 0;
+  const lines: string[] = [
+    `だい${region?.foundedAtSeq ?? 0}のできごとで たんじょう。ひらいたのは ${region?.owner ?? "なぞのひと"}。`,
+    `いまは ${displayName}${municipalRank(v?.tier ?? 0)} — じんこう ${pop}にん。`,
+    "",
+  ];
+  if (dead.length === 0) {
+    lines.push("いれいひは まだ まっさらだ。", "だれも しんでいない、へいわな むらである。");
+    return lines;
+  }
+  const EPITAPHS = [
+    "よく はたらき よく わらった",
+    "しんらいに いきた ひとだった",
+    "たびと しょうばいを あいした",
+    "しずかな くらしを まもった",
+    "みなに めぐみを わけた",
+    "さいごまで ゆめを おった",
+  ];
+  lines.push(`― いれいひ ― てんに めされた ${dead.length}めい:`);
+  for (const d of dead.sort((p1, p2) => p2.seq - p1.seq).slice(0, 8)) {
+    const name = d.id.split("@")[0] ?? d.id;
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (Math.imul(h, 31) + name.charCodeAt(i)) | 0;
+    const t = trades.get(d.id) ?? 0;
+    const vc = vouchedIn.get(d.id) ?? 0;
+    lines.push(` ☆ ${name} (とりひき${t}・しんらい${vc}) 「${EPITAPHS[Math.abs(h) % EPITAPHS.length]}」`);
+  }
+  if (dead.length > 8) lines.push(` …ほか ${dead.length - 8}めいの なが きざまれている。`);
+  return lines;
+}
+
 function hallMenu(village: Village): void {
   const ctx = villageContext(village);
   if (!ctx) return;
@@ -734,6 +789,7 @@ function hallMenu(village: Village): void {
   ui.push(
     new Menu(`${region.displayName} やくば`, [
       { label: "むらの じょうほう", value: "info" },
+      { label: "むらの きろく (いれいひ)", value: "memorial" },
       { label: "しさつする (まなび)", value: "inspect", disabled: ctx.livesHere },
       { label: "この むらに ひっこす", value: "migrate", disabled: !heroAgent() || ctx.livesHere },
       { label: "いじゅうしゃを まねく", value: "admit", disabled: !ctx.isOwner },
@@ -749,7 +805,9 @@ function hallMenu(village: Village): void {
       },
       { label: "やめる", value: "cancel" },
     ], (value) => {
-      if (value === "info") villageInfo(ctx);
+      if (value === "memorial") {
+        ui.push(new Info(`${region.displayName} — むらの きろく`, memorialLines(region.id, region.displayName), () => ui.pop()));
+      } else if (value === "info") villageInfo(ctx);
       else if (value === "inspect") inspectVillage(ctx);
       else if (value === "migrate") void runAct({ kind: "migrate", toRegion: region.id }, `${region.id}へ ひっこす`);
       else if (value === "admit") {
