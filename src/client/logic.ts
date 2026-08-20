@@ -6,6 +6,7 @@
 
 import { z } from "zod";
 import type { ActResult, AgentView, ItemView, MeView, RegionView, Snapshot } from "../shared";
+import { wareByKind } from "./shop";
 import { account, type BrowserWallet, reads, register, submit, type SubmitResult } from "./wire";
 
 const name = z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/, "name must be letters then alphanumerics").max(64);
@@ -29,6 +30,9 @@ export const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("mintItem"), itemKind: z.string().min(1).max(32), owner: identifier }),
   z.object({ kind: z.literal("amendMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
   z.object({ kind: z.literal("amendGovernance"), regionId, governance: z.enum(["dictatorship", "council"]) }),
+  z.object({ kind: z.literal("buyItem"), regionId, ware: z.string().min(1).max(32) }),
+  z.object({ kind: z.literal("amendDiplomacy"), regionId, target: regionId, stance: z.enum(["absorb", "map", "reexamine", "reject"]) }),
+  z.object({ kind: z.literal("proposeDiplomacy"), regionId, target: regionId, stance: z.enum(["absorb", "map", "reexamine", "reject"]) }),
   z.object({ kind: z.literal("proposeMinting"), regionId, minting: z.enum(["owner", "anyone"]) }),
   z.object({ kind: z.literal("proposeGovernance"), regionId, governance: z.enum(["dictatorship"]) }),
 ]);
@@ -139,6 +143,43 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
           value: { kind: "council", members, threshold: Math.max(1, Math.ceil(members.length / 2)) },
         },
       });
+    }
+    case "buyItem": {
+      const ware = wareByKind(action.ware);
+      if (!ware) return { ok: false, reason: "unknown-ware" };
+      if (!hero.agentId) return { ok: false, reason: "no-agent: found or join a village first" };
+      const regions = (await reads.regions()) as RegionView[];
+      const region = regions.find((r) => r.id === action.regionId);
+      if (!region) return { ok: false, reason: "unknown-region" };
+      // Pay first — into the village treasury, through the real (taxed) transfer path.
+      const paid = await asAgent(wallet, hero, (agent) => ({
+        kind: "transfer",
+        from: agent,
+        to: "treasury@" + action.regionId,
+        amount: ware.price,
+      }));
+      if (!paid.ok) return paid;
+      // Then mint under the village's own institution: the signer the rule names.
+      const minting = region.institutions.itemPolicy.minting;
+      const command = { kind: "mint-item", itemId: newItemId(ware.kind), itemKind: ware.kind, owner: hero.agentId };
+      const minted = minting === "owner" ? await asOwner(wallet, hero, command) : await asAgent(wallet, hero, () => command);
+      if (!minted.ok) return { ok: false, reason: "だいきんは はらったのに しなものが でてこない… (" + minted.reason + ")" };
+      return { ok: true, detail: { ware: ware.kind, price: ware.price } };
+    }
+    case "amendDiplomacy":
+    case "proposeDiplomacy": {
+      const regions = (await reads.regions()) as RegionView[];
+      const region = regions.find((r) => r.id === action.regionId);
+      if (!region) return { ok: false, reason: "unknown-region" };
+      const cur = region.institutions.diplomacyPolicy;
+      const change = {
+        policy: "diplomacy",
+        value: { defaultStance: cur.defaultStance, overrides: { ...cur.overrides, [action.target]: action.stance } },
+      };
+      if (action.kind === "amendDiplomacy") {
+        return asOwner(wallet, hero, { kind: "amend", regionId: action.regionId, change });
+      }
+      return asAgent(wallet, hero, () => ({ kind: "propose", regionId: action.regionId, change }));
     }
     case "proposeMinting":
       return asAgent(wallet, hero, () => ({

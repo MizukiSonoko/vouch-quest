@@ -3,6 +3,7 @@
 // through conversation. Same agent, same state → same words for every player.
 
 import type { AgentView, ItemView } from "../shared";
+import { kindName } from "./shop";
 
 function pick<T>(seedText: string, pool: readonly T[]): T {
   let h = 0;
@@ -33,7 +34,7 @@ export function npcLines(agent: AgentView, worldItems: readonly ItemView[], regi
 
   const belongings = worldItems.filter((i) => i.owner === agent.id);
   const first = belongings[0];
-  if (first) lines.push(`この「${first.kind}」は たからものさ。`);
+  if (first) lines.push(`この「${kindName(first.kind)}」は たからものさ。`);
 
   const heroName = agent.id.split("@")[0];
   if (regionOwner && heroName === regionOwner) lines.push("なにを かくそう、この むらの あるじは わたしだ。");

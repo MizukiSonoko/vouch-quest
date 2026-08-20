@@ -1,6 +1,7 @@
 // The village newspaper: world log events → Dragon Quest-style Japanese lines.
 
 import type { LogEventView } from "../shared";
+import { kindName } from "./shop";
 
 /** First string found at any of the dot-paths — event payloads nest differently per type. */
 function str(payload: Record<string, unknown>, ...paths: string[]): string {
@@ -43,7 +44,7 @@ export function eventToMessage(event: LogEventView): string {
     case "economy.minted":
       return `どこからともなく おかねが うまれた…`;
     case "item.minted":
-      return `${str(p, "owner")}は 「${str(p, "kind", "itemKind")}」を てにいれた!`;
+      return `${str(p, "owner")}は 「${kindName(str(p, "kind", "itemKind"))}」を てにいれた!`;
     case "item.transferred":
       return `${str(p, "from")}は ${str(p, "to")}に どうぐを ゆずった。`;
     case "region.institution.changed":

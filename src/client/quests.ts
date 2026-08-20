@@ -141,3 +141,22 @@ export function heroTitle(ctx: QuestContext): string {
   if (ctx.snapshot.me.agentId) return "むらびと";
   return "かけだしの たびびと";
 }
+
+/** Sprite tier for a title (see sprites.HERO_LOOKS): 0 plain … 5 legendary. */
+export function titleTier(title: string): number {
+  switch (title) {
+    case "でんせつの ゆうしゃ":
+      return 5;
+    case "しんらいの おうじゃ":
+      return 4;
+    case "だいごうしょう":
+      return 3;
+    case "そんちょう":
+      return 2;
+    case "ほしょうにん":
+    case "あきんど":
+      return 1;
+    default:
+      return 0;
+  }
+}

@@ -9,7 +9,8 @@ import { npcLines } from "./dialogue";
 import { eventToMessage } from "./feed";
 import { buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, type WorldMap } from "./map";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
-import { heroStats, heroTitle, type QuestContext, questProgress } from "./quests";
+import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
+import { canShopHere, CATALOG, kindName, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
 import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
 import { buildSprites, CELL } from "./sprites";
 import { drawText, drawWindow, Info, Menu, MessageLog, TextInput, UiStack } from "./ui";
@@ -196,7 +197,7 @@ function npcMenu(mob: Mob): void {
           ui.push(
             new Menu(
               "どの どうぐを わたす?",
-              items.map((i) => ({ label: `${i.kind} (${i.id})`, value: i.id })),
+              items.map((i) => ({ label: `${kindName(i.kind)} (${i.id})`, value: i.id })),
               (itemId) => void runAct({ kind: "transferItem", itemId, to: a.id }, `どうぐを わたす`),
               () => ui.pop(),
             ),
@@ -261,6 +262,11 @@ function hallMenu(village: Village): void {
         value: "governance",
         disabled: !ctx.isOwner || ctx.isCouncil,
       },
+      {
+        label: ctx.isCouncil ? "がいこう (ていあん)" : "がいこう",
+        value: "diplomacy",
+        disabled: ctx.isCouncil ? !ctx.livesHere : !ctx.isOwner,
+      },
       { label: "やめる", value: "cancel" },
     ], (value) => {
       if (value === "info") villageInfo(ctx);
@@ -277,6 +283,8 @@ function hallMenu(village: Village): void {
             );
           }, () => ui.pop()),
         );
+      } else if (value === "diplomacy") {
+        diplomacyMenu(ctx);
       } else if (value === "governance") {
         ui.push(
           new Menu("ひょうぎかいせいに うつす? (もどすには ひょうけつが いる)", [
@@ -375,6 +383,62 @@ function courtMenu(village: Village): void {
   );
 }
 
+/** 道具屋 — real gold into the treasury, a real item minted under the village's rule. */
+function shopMenu(village: Village): void {
+  const ctx2 = villageContext(village);
+  if (!ctx2 || !snapshot) return;
+  const { region } = ctx2;
+  const gate = canShopHere(region, snapshot);
+  if (!gate.ok) {
+    ui.push(new Info(`${region.displayName}の どうぐや`, ["「いらっしゃい… といいたいところだが。」", gate.reason, `(どうぐづくりのおきて: ${region.institutions.itemPolicy.minting})`], () => ui.pop()));
+    return;
+  }
+  const gold = heroAgent()?.balances.currency ?? 0;
+  ui.push(
+    new Menu(`${region.displayName}の どうぐや (もちがね ${gold}G)`, [
+      ...CATALOG.map((w) => ({ label: `${w.name}  ${w.price}G`, value: w.kind, disabled: gold < w.price })),
+      { label: "やめる", value: "cancel" },
+    ], (kind) => {
+      if (kind === "cancel") return ui.clear();
+      const ware = CATALOG.find((w) => w.kind === kind);
+      if (!ware) return ui.clear();
+      ui.push(
+        new Menu(`${ware.name} — ${ware.blurb} ${ware.price}Gで かう?`, [
+          { label: "かう", value: "yes" },
+          { label: "やめる", value: "no" },
+        ], (v) => {
+          if (v === "yes") void runAct({ kind: "buyItem", regionId: region.id, ware: ware.kind }, `${ware.name}を かう`);
+          else ui.pop();
+        }, () => ui.pop()),
+      );
+    }, () => ui.clear()),
+  );
+}
+
+/** 外交 — set this village's stance toward another (roads appear when both sides warm). */
+function diplomacyMenu(ctx2: VillageContext): void {
+  const { region } = ctx2;
+  const others = (snapshot?.regions ?? []).filter((r) => r.id !== region.id);
+  if (others.length === 0) return;
+  ui.push(
+    new Menu("どの むらへの たいどを かえる?",
+      others.map((r) => ({ label: `${r.displayName} (いま: ${STANCE_JA[stanceToward(region, r.id)]})`, value: r.id })),
+      (target) => {
+        ui.push(
+          new Menu(`${target}への たいどは?`, [
+            { label: "うけいれ (absorb) — みちが つながる", value: "absorb" },
+            { label: "しんこう (map)  — みちが つながる", value: "map" },
+            { label: "ようすみ (reexamine)", value: "reexamine" },
+            { label: "こばみ (reject)", value: "reject" },
+          ], (stance) => {
+            const kind = ctx2.isCouncil ? "proposeDiplomacy" : "amendDiplomacy";
+            void runAct({ kind, regionId: region.id, target, stance }, `がいこうを かえる`);
+          }, () => ui.pop()),
+        );
+      }, () => ui.pop()),
+  );
+}
+
 /** The gate signboard is now just the village's public notice. */
 function signMenu(village: Village): void {
   const ctx = villageContext(village);
@@ -442,7 +506,7 @@ function fieldMenu(): void {
           );
         } else if (value === "items") {
           const items = myItems();
-          ui.push(new Info("どうぐぶくろ", items.length ? items.map((i) => `${i.kind} (${i.id})`) : ["なにも もっていない。"], () => ui.pop()));
+          ui.push(new Info("どうぐぶくろ", items.length ? items.map((i) => `${kindName(i.kind)} (${i.id})`) : ["なにも もっていない。"], () => ui.pop()));
         } else if (value === "quests") {
           questJournal();
         } else if (value === "map") {
@@ -494,6 +558,10 @@ function interact(): void {
     const village = map.villages.find((v) => v.court[0] === fx && v.court[1] === fy);
     if (village) return courtMenu(village);
   }
+  if (tile === Tile.Stall) {
+    const village = map.villages.find((v) => v.stall[0] === fx && v.stall[1] === fy);
+    if (village) return shopMenu(village);
+  }
   if (tile === Tile.Chest) {
     const village = map.villages.find((v) => v.chest[0] === fx && v.chest[1] === fy);
     const treasury = snapshot.agents.find((a) => a.id === `treasury@${village?.regionId}`);
@@ -525,6 +593,7 @@ const MINI_COLORS: Record<number, string> = {
   [Tile.CourtDoor]: "#e8e8e8",
   [Tile.Rock]: "#6a6a6a",
   [Tile.Flower]: "#f0a0c0",
+  [Tile.Stall]: "#d9553f",
 };
 const MINI_SCALE = 5;
 let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;
@@ -720,13 +789,29 @@ function render(): void {
     label("やくば", village.hall);
     label("ぞうへい", village.mint);
     label("さいばん", village.court);
+    // 関所ばた: this village's diplomatic stance toward the hero's home village.
+    const myHome = snapshot.me.agentId?.split("@")[1];
+    const region = snapshot.regions.find((r) => r.id === village.regionId);
+    if (myHome && region && region.id !== myHome) {
+      const stance = stanceToward(region, myHome);
+      const fx = village.gate[0] * CELL - camX + CELL + 4;
+      const fy = (village.gate[1] + 1) * CELL - camY;
+      ctx.fillStyle = "#5b3a1e";
+      ctx.fillRect(fx, fy - 30, 4, 34);
+      ctx.fillStyle = STANCE_COLOR[stance];
+      ctx.fillRect(fx + 4, fy - 30, 22, 14);
+      ctx.font = '12px "DotGothic16", monospace';
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(STANCE_JA[stance], fx - 4, fy + 12);
+    }
   }
 
   for (const mob of mobs) {
     const pair = sprites.roles[mob.agent.role] ?? sprites.roles["artisan"];
     if (pair) ctx.drawImage(pair[mob.frame === 0 ? 0 : 1], mob.px - camX, mob.py - camY);
   }
-  ctx.drawImage(sprites.hero[player.frame === 0 ? 0 : 1], player.px - camX, player.py - camY);
+  const heroPair = sprites.heroFor(titleTier(title));
+  ctx.drawImage(heroPair[player.frame === 0 ? 0 : 1], player.px - camX, player.py - camY);
 
   // HUD
   const hero = heroAgent();

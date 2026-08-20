@@ -1,6 +1,8 @@
 // Types shared between the game server and the browser client. These mirror the
 // vouch-node observation surface (read shapes) plus the game's own /api envelope.
 
+export type Stance = "absorb" | "map" | "reexamine" | "reject";
+
 export interface RegionView {
   readonly id: string;
   readonly displayName: string;
@@ -13,6 +15,10 @@ export interface RegionView {
     readonly governance: { readonly kind: string };
     readonly itemPolicy: { readonly minting: string };
     readonly economyPolicy: { readonly baseCostRate: number; readonly minCostRate: number };
+    readonly diplomacyPolicy: {
+      readonly defaultStance: Stance;
+      readonly overrides: Readonly<Record<string, Stance>>;
+    };
   };
   readonly openProposal: { readonly proposedBy: string; readonly votes: readonly string[] } | null;
 }

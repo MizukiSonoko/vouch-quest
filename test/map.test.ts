@@ -28,6 +28,7 @@ const region = (id: string, foundedAtSeq: number) => ({
     governance: { kind: "dictatorship" },
     itemPolicy: { minting: "owner" },
     economyPolicy: { baseCostRate: 0.2, minCostRate: 0.05 },
+    diplomacyPolicy: { defaultStance: "reexamine" as const, overrides: {} },
   },
   openProposal: null,
 });

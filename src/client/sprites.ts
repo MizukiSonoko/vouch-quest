@@ -168,6 +168,25 @@ const ROCK = [
   "gggggggggggggggg",
 ];
 
+const STALL = [
+  "gggggggggggggggg",
+  "gxRRRReeeeRRRRxg",
+  "gxeeeeRRRReeeexg",
+  "gxRRRReeeeRRRRxg",
+  "gxxxxxxxxxxxxxxg",
+  "ggxbggggggggbxgg",
+  "ggxbggyyggggbxgg",
+  "ggxbgyCCyoggbxgg",
+  "ggxbggyyooggbxgg",
+  "ggxbbbbbbbbbbxgg",
+  "ggxbFFFFFFFFbxgg",
+  "ggxbFFFFFFFFbxgg",
+  "ggxbbbbbbbbbbxgg",
+  "gggGgggggdgggggg",
+  "gggggggggggggggg",
+  "gggggggggggggggg",
+];
+
 const FLOWER = [
   "gggggggggggggggg",
   "ggGggggggggdgggg",
@@ -256,16 +275,49 @@ function person(body: string, frame: 0 | 1): string[] {
   ];
 }
 
-function hero(frame: 0 | 1): string[] {
-  const rows = person("B", frame);
-  rows[1] = ".....xyyyyx.....";
-  rows[2] = "....xykkkkyx....";
+interface HeroLook {
+  readonly tunic: string;
+  readonly headband: string;
+  readonly cape?: string;
+  readonly crown?: boolean;
+}
+
+/** The hero's look climbs with their title tier (see quests.titleTier). */
+const HERO_LOOKS: readonly HeroLook[] = [
+  { tunic: "B", headband: "y" }, // 0 traveler / villager — blue tunic
+  { tunic: "o", headband: "y" }, // 1 あきんど — merchant orange
+  { tunic: "B", headband: "y", cape: "r" }, // 2 そんちょう — red cape
+  { tunic: "y", headband: "e", cape: "r" }, // 3 だいごうしょう — gold garb
+  { tunic: "e", headband: "y", cape: "v", crown: true }, // 4 しんらいの おうじゃ
+  { tunic: "y", headband: "y", cape: "e", crown: true }, // 5 でんせつの ゆうしゃ
+];
+
+function hero(look: HeroLook, frame: 0 | 1): string[] {
+  const rows = person(look.tunic, frame);
+  rows[1] = `.....x${look.headband.repeat(4)}x.....`;
+  rows[2] = `....x${look.headband}kkkk${look.headband}x....`;
+  if (look.crown) {
+    rows[0] = ".....y.yy.y.....";
+    rows[1] = ".....xyyyyx.....";
+  }
+  if (look.cape) {
+    const c = look.cape;
+    for (const y of [8, 9, 10, 11]) {
+      const row = rows[y] ?? "";
+      const left = row.indexOf("x");
+      const right = row.lastIndexOf("x");
+      if (left > 0 && right < 15) {
+        rows[y] = row.slice(0, left - 1) + c + row.slice(left, right + 1) + c + row.slice(right + 2);
+      }
+    }
+  }
   return rows;
 }
 
 export interface SpriteSet {
   readonly tiles: ReadonlyMap<Tile, HTMLCanvasElement>;
-  readonly hero: readonly [HTMLCanvasElement, HTMLCanvasElement];
+  /** The hero pair for a title tier (0..5); built lazily and cached. */
+  heroFor(tier: number): readonly [HTMLCanvasElement, HTMLCanvasElement];
   readonly roles: Readonly<Record<string, readonly [HTMLCanvasElement, HTMLCanvasElement]>>;
 }
 
@@ -291,11 +343,22 @@ export function buildSprites(): SpriteSet {
     [Tile.CourtDoor, draw(doorWith("e"))],
     [Tile.Rock, draw(ROCK)],
     [Tile.Flower, draw(FLOWER)],
+    [Tile.Stall, draw(STALL)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
+  const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();
   return {
     tiles,
-    hero: [draw(hero(0)), draw(hero(1))],
+    heroFor(tier: number) {
+      const clamped = Math.max(0, Math.min(tier, HERO_LOOKS.length - 1));
+      let cached = heroCache.get(clamped);
+      if (!cached) {
+        const look = HERO_LOOKS[clamped] ?? HERO_LOOKS[0]!;
+        cached = [draw(hero(look, 0)), draw(hero(look, 1))] as const;
+        heroCache.set(clamped, cached);
+      }
+      return cached;
+    },
     roles: { artisan: pair("a"), merchant: pair("o"), broker: pair("v"), treasury: pair("m") },
   };
 }

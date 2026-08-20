@@ -5,6 +5,7 @@
 // hash. Pure data — no DOM, no Math.random, so it is unit-testable.
 
 import type { AgentView, Snapshot } from "../shared";
+import { friendlyPairs } from "./shop";
 
 export const MAP_W = 120;
 export const MAP_H = 80;
@@ -34,6 +35,7 @@ export const enum Tile {
   CourtDoor = 17,
   Rock = 18,
   Flower = 19,
+  Stall = 20,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -52,6 +54,7 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.CourtRoof,
   Tile.CourtDoor,
   Tile.Rock,
+  Tile.Stall,
 ]);
 
 /** Village slot origins (top-left), spaced for the largest possible plot (20x15). */
@@ -78,6 +81,8 @@ export interface Village {
   readonly gate: readonly [number, number];
   readonly sign: readonly [number, number];
   readonly chest: readonly [number, number];
+  /** The item shop's market stall. */
+  readonly stall: readonly [number, number];
   /** Civic building doors: town hall (governance), mint (items), courthouse (votes). */
   readonly hall: readonly [number, number];
   readonly mint: readonly [number, number];
@@ -239,6 +244,16 @@ function carveVillage(
   if (!isFree(sign[0], sign[1])) sign = [gx + 2, vy + h - 2] as const;
   set(tiles, sign[0], sign[1], Tile.Sign);
 
+  // The item shop's stall, on a free cell near the gate (opposite side from the sign).
+  let stall: readonly [number, number] = [gx > vx + 3 ? gx + 2 : gx - 2, vy + h - 3];
+  if (!isFree(stall[0], stall[1])) {
+    stall = [gx + 2, vy + h - 3] as const;
+    for (let tries = 0; !isFree(stall[0], stall[1]) && tries < 20; tries++) {
+      stall = [vx + 2 + Math.floor(rng() * (w - 4)), vy + 3 + Math.floor(rng() * (h - 6))] as const;
+    }
+  }
+  set(tiles, stall[0], stall[1], Tile.Stall);
+
   // Village character: rocks, a pond or two, flowers — counts and places per-region.
   const decor: [Tile, number][] = [
     [Tile.Rock, Math.floor(rng() * 4)],
@@ -269,7 +284,7 @@ function carveVillage(
     if (isFree(sx, sy)) spots.push([sx, sy] as const);
   }
 
-  return { x: vx, y: vy, w, h, gate: [gx, vy + h - 1] as const, sign, chest, hall, mint, court, spots };
+  return { x: vx, y: vy, w, h, gate: [gx, vy + h - 1] as const, sign, chest, stall, hall, mint, court, spots };
 }
 
 export function buildMap(snapshot: Snapshot): WorldMap {
@@ -294,6 +309,26 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     const carved = carveVillage(tiles, region.id, i, residents);
     return { regionId: region.id, displayName: region.displayName, ...carved };
   });
+
+  // Diplomacy made visible: mutually friendly villages get a road between their
+  // gates. Roads never cut through a village plot — a fence stays a fence.
+  const inAnyPlot = (x: number, y: number): boolean =>
+    villages.some((v) => x >= v.x && x < v.x + v.w && y >= v.y && y < v.y + v.h);
+  const pave = (x: number, y: number): void => {
+    if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= MAP_H - 2 || inAnyPlot(x, y)) return;
+    set(tiles, x, y, Tile.Path);
+  };
+  for (const [aId, bId] of friendlyPairs(snapshot.regions)) {
+    const a = villages.find((v) => v.regionId === aId);
+    const b = villages.find((v) => v.regionId === bId);
+    if (!a || !b) continue;
+    const [ax, ayGate] = a.gate;
+    const [bx, byGate] = b.gate;
+    const ay = ayGate + 1;
+    const by = byGate + 1;
+    for (let y = Math.min(ay, by); y <= Math.max(ay, by); y++) pave(ax, y);
+    for (let x = Math.min(ax, bx); x <= Math.max(ax, bx); x++) pave(x, by);
+  }
 
   return { tiles, villages };
 }
