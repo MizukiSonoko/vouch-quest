@@ -7,8 +7,8 @@
 import type { AgentView, Snapshot } from "../shared";
 import { friendlyPairs } from "./shop";
 
-export const MAP_W = 120;
-export const MAP_H = 80;
+export const MAP_W = 240;
+export const MAP_H = 160;
 export const MIN_PLOT_W = 16;
 export const MAX_PLOT_W = 20;
 export const MIN_PLOT_H = 12;
@@ -50,6 +50,11 @@ export const enum Tile {
   SnowTree = 32,
   Cactus = 33,
   Swamp = 34,
+  Pavement = 35,
+  Rail = 36,
+  BuildingWall = 37,
+  BuildingRoof = 38,
+  Station = 39,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -81,25 +86,26 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.WallWoodWindow,
   Tile.SnowTree,
   Tile.Cactus,
+  Tile.BuildingWall,
+  Tile.BuildingRoof,
+  Tile.Station,
 ]);
 
-/** Village slot origins (top-left), spaced for the largest possible plot (20x15). */
-export const SLOTS: readonly (readonly [number, number])[] = [
-  [10, 8],
-  [52, 8],
-  [94, 8],
-  [10, 32],
-  [52, 32],
-  [94, 32],
-  [10, 56],
-  [52, 56],
-  [94, 56],
-];
+/** Village slot origins (top-left), a 5x6 lattice spaced for the largest plot (20x15). */
+export const SLOTS: readonly (readonly [number, number])[] = Array.from({ length: 30 }, (_, i) => {
+  const col = i % 5;
+  const row = Math.floor(i / 5);
+  return [10 + col * 44, 8 + row * 25] as const;
+});
 
 export interface Village {
   readonly regionId: string;
   readonly displayName: string;
   readonly biome: Biome;
+  /** Development: 0 むら, 1 まち, 2 とし (real population + treasury drive it). */
+  readonly tier: number;
+  /** The train station platform, if this settlement grew into a city. */
+  readonly station: readonly [number, number] | null;
   readonly x: number;
   readonly y: number;
   readonly w: number;
@@ -121,6 +127,15 @@ export interface Village {
 export interface WorldMap {
   readonly tiles: Uint8Array;
   readonly villages: readonly Village[];
+  /** Rail segments (tile-coordinate polylines) for the running trains. */
+  readonly rails: readonly (readonly (readonly [number, number])[])[];
+}
+
+/** How far a settlement has developed, from its REAL population and treasury. */
+export function devTier(residents: number, treasury: number): number {
+  if (residents >= 6 || treasury >= 80) return 2;
+  if (residents >= 4 || treasury >= 25) return 1;
+  return 0;
 }
 
 function hash2(x: number, y: number): number {
@@ -226,6 +241,7 @@ function carveVillage(
   regionId: string,
   slotIndex: number,
   residents: number,
+  tier: number,
 ): Omit<Village, "regionId" | "displayName"> {
   const rng = villageRng(regionId);
   const slot = SLOTS[slotIndex % SLOTS.length] ?? SLOTS[0]!;
@@ -233,7 +249,8 @@ function carveVillage(
   const w = MIN_PLOT_W + Math.floor(rng() * (MAX_PLOT_W - MIN_PLOT_W + 1));
   const h = MIN_PLOT_H + Math.floor(rng() * (MAX_PLOT_H - MIN_PLOT_H + 1));
   const biome = biomeAt(vx + Math.floor(w / 2), vy + Math.floor(h / 2));
-  const [g1, g2] = biomeGround(biome);
+  // A full city paves over its biome; towns and villages keep the local ground.
+  const [g1, g2] = tier >= 2 ? ([Tile.Pavement, Tile.Pavement] as const) : biomeGround(biome);
 
   // Clear the plot to the biome's ground, fence it, open a south gate.
   for (let y = vy; y < vy + h; y++) {
@@ -355,19 +372,24 @@ function carveVillage(
   const houseDoors: { door: readonly [number, number]; tile: Tile }[] = [];
   const houses = Math.min(Math.max(residents, 1), 8);
   for (let i = 0; i < houses; i++) {
-    const bw = 2 + Math.floor(rng() * 3); // 2..4 wide
-    const roofRows = rng() < 0.6 ? 2 : 1;
-    const bh = roofRows + 1;
-    const roof = ROOFS[Math.floor(rng() * ROOFS.length)] ?? Tile.HouseRoof;
-    const wood = rng() < 0.4;
-    const build: Build = wood
-      ? { roof, wall: Tile.WallWood, door: Tile.DoorWood, window: Tile.WallWoodWindow }
-      : { roof, wall: Tile.HouseWall, door: Tile.HouseDoor, window: Tile.WallWindow };
+    // Cities raise towers; towns get the occasional tall house; villages stay low.
+    const tower = tier >= 2 && rng() < 0.55;
+    const bw = tower ? 3 : 2 + Math.floor(rng() * 3);
+    const roofRows = tower ? 1 : rng() < 0.6 ? 2 : 1;
+    const wallRows = tower ? 2 + Math.floor(rng() * 2) + (tier >= 2 ? 1 : 0) : 1;
+    const bh = roofRows + wallRows;
+    const roof = tower ? Tile.BuildingRoof : (ROOFS[Math.floor(rng() * ROOFS.length)] ?? Tile.HouseRoof);
+    const wood = !tower && rng() < 0.4;
+    const build: Build = tower
+      ? { roof, wall: Tile.BuildingWall, door: Tile.HouseDoor, window: Tile.BuildingWall }
+      : wood
+        ? { roof, wall: Tile.WallWood, door: Tile.DoorWood, window: Tile.WallWoodWindow }
+        : { roof, wall: Tile.HouseWall, door: Tile.HouseDoor, window: Tile.WallWindow };
     for (let tries = 0; tries < 20; tries++) {
       const bx = vx + 1 + Math.floor(rng() * (w - 1 - bw));
       const by = vy + 1 + Math.floor(rng() * Math.max(1, h - bh - 3));
       if (overlapsProtected(bx, by, bw, bh)) continue;
-      const built = drawBuilding(bx, by, bw, roofRows, 1, build);
+      const built = drawBuilding(bx, by, bw, roofRows, wallRows, build);
       houseDoors.push({ door: built.door, tile: build.door });
       break;
     }
@@ -418,7 +440,7 @@ function carveVillage(
   const lush = biome === Biome.Plains || biome === Biome.Forest;
   const decor: [Tile, number][] = [
     [Tile.Well, rng() < 0.75 ? 1 : 0],
-    [Tile.Lamp, 1 + Math.floor(rng() * 2)],
+    [Tile.Lamp, 1 + Math.floor(rng() * 2) + tier * 2],
     [Tile.Rock, Math.floor(rng() * (biome === Biome.Desert || biome === Biome.Snow ? 6 : 4))],
     [Tile.Water, biome === Biome.Desert ? (rng() < 0.4 ? 1 : 0) : Math.floor(rng() * 3)],
     [Tile.Flower, lush ? 1 + Math.floor(rng() * 5) : 0],
@@ -461,7 +483,16 @@ function carveVillage(
     if (isFree(sx, sy)) spots.push([sx, sy] as const);
   }
 
-  return { x: vx, y: vy, w, h, biome, gate: [gx, vy + h - 1] as const, sign, chest, stall, hall, mint, court, spots };
+  // A city earns a train station: a platform beside the gate road, outside the fence.
+  let station: readonly [number, number] | null = null;
+  if (tier >= 2) {
+    station = [gx + 2 < MAP_W ? gx + 2 : gx - 2, vy + h + 1] as const;
+    set(tiles, station[0], station[1], Tile.Station);
+    set(tiles, station[0] - 1, station[1], Tile.Pavement);
+    set(tiles, station[0] + 1, station[1], Tile.Pavement);
+  }
+
+  return { x: vx, y: vy, w, h, biome, tier, station, gate: [gx, vy + h - 1] as const, sign, chest, stall, hall, mint, court, spots };
 }
 
 export function buildMap(snapshot: Snapshot): WorldMap {
@@ -505,7 +536,8 @@ export function buildMap(snapshot: Snapshot): WorldMap {
 
   const villages = snapshot.regions.map((region, i) => {
     const residents = snapshot.agents.filter((a) => a.region === region.id && a.role !== "treasury").length;
-    const carved = carveVillage(tiles, region.id, i, residents);
+    const treasury = snapshot.agents.find((a) => a.id === `treasury@${region.id}`)?.balances.currency ?? 0;
+    const carved = carveVillage(tiles, region.id, i, residents, devTier(residents, treasury));
     return { regionId: region.id, displayName: region.displayName, ...carved };
   });
 
@@ -529,7 +561,37 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     for (let x = Math.min(ax, bx); x <= Math.max(ax, bx); x++) pave(x, by);
   }
 
-  return { tiles, villages };
+  // Rails: the stations form a line — technology stitches the cities together.
+  const rails: (readonly [number, number])[][] = [];
+  const stations = villages.filter((v) => v.station).sort((a, b) => a.x - b.x || a.y - b.y);
+  const inAnyPlot2 = (x: number, y: number): boolean =>
+    villages.some((v) => x >= v.x && x < v.x + v.w && y >= v.y && y < v.y + v.h);
+  for (let i = 0; i + 1 < stations.length; i++) {
+    const a = stations[i]?.station;
+    const b = stations[i + 1]?.station;
+    if (!a || !b) continue;
+    const path: (readonly [number, number])[] = [];
+    const lay = (x: number, y: number): void => {
+      path.push([x, y] as const);
+      if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= MAP_H - 2 || inAnyPlot2(x, y)) return;
+      const t = tiles[y * MAP_W + x] ?? Tile.Grass;
+      if (t !== Tile.Station) set(tiles, x, y, Tile.Rail);
+    };
+    const dirY = Math.sign(b[1] - a[1]);
+    for (let y = a[1]; y !== b[1]; y += dirY || 1) {
+      if (dirY === 0) break;
+      lay(a[0], y);
+    }
+    const dirX = Math.sign(b[0] - a[0]);
+    for (let x = a[0]; x !== b[0]; x += dirX || 1) {
+      if (dirX === 0) break;
+      lay(x, b[1]);
+    }
+    path.push(b);
+    rails.push(path);
+  }
+
+  return { tiles, villages, rails };
 }
 
 /** Stable NPC placement: region residents (minus the hero) each take a village spot. */

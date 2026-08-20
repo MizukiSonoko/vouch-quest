@@ -47,8 +47,15 @@ export function eventToMessage(event: LogEventView): string {
       return `${str(p, "owner")}は 「${kindName(str(p, "kind", "itemKind"))}」を てにいれた!`;
     case "item.transferred":
       return `${str(p, "from")}は ${str(p, "to")}に どうぐを ゆずった。`;
-    case "region.institution.changed":
-      return `むら「${str(p, "regionId")}」の おきてが かわった!`;
+    case "region.institution.changed": {
+      const policy = str(p, "change.policy");
+      const rid = str(p, "regionId");
+      if (policy === "economy") return `むら「${rid}」で ぜいせいかいかく! あたらしい ほうりつだ`;
+      if (policy === "items") return `むら「${rid}」で ちゅうぞうほうが かいせいされた!`;
+      if (policy === "diplomacy") return `むら「${rid}」が がいこうほうしんを あらためた`;
+      if (policy === "governance") return `むら「${rid}」の せいじたいせいが かわった!`;
+      return `むら「${rid}」の おきてが かわった!`;
+    }
     case "gov.proposal.opened":
       return `むら「${str(p, "regionId")}」で ひょうけつが はじまった!`;
     case "gov.vote.cast":

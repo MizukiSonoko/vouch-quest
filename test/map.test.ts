@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildMap,
+  devTier,
   heroSpawn,
   isSolid,
   MAP_H,
@@ -122,6 +123,37 @@ describe("placeNpcs", () => {
     const ids = npcs.map((n) => n.agent.id).sort();
     expect(ids).toEqual(["ann@asahi", "bo@yuhi"]);
     for (const npc of npcs) expect(isSolid(map, npc.x, npc.y)).toBe(false);
+  });
+});
+
+describe("devTier", () => {
+  test("population or treasury wealth grows a village into a town, then a city", () => {
+    expect(devTier(1, 0)).toBe(0);
+    expect(devTier(4, 0)).toBe(1);
+    expect(devTier(0, 30)).toBe(1);
+    expect(devTier(6, 0)).toBe(2);
+    expect(devTier(2, 100)).toBe(2);
+  });
+});
+
+describe("cities", () => {
+  test("a city paves itself, gets a station, and two cities get connected rails", () => {
+    const crowd = (rid: string) =>
+      ["A", "B", "C", "D", "E", "F"].map((n) => agent(`${n}${rid}@${rid}`, rid, "artisan"));
+    const citySnap: Snapshot = {
+      ...snapshot,
+      regions: [region("asahi", 2), region("yuhi", 9)],
+      agents: [...crowd("asahi"), ...crowd("yuhi")],
+      me: { heroName: "mizuki", registered: true, agentId: null },
+    };
+    const m = buildMap(citySnap);
+    for (const v of m.villages) {
+      expect(v.tier).toBe(2);
+      expect(v.station).not.toBeNull();
+      if (v.station) expect(tileAt(m, v.station[0], v.station[1])).toBe(Tile.Station);
+    }
+    expect(m.rails.length).toBe(1);
+    expect(m.rails[0]?.length ?? 0).toBeGreaterThan(4);
   });
 });
 

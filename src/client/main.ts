@@ -356,7 +356,7 @@ function villageInfo(ctx: VillageContext): void {
   ui.push(
     new Info(`むら「${region.displayName}」(${region.id})`, [
       `あるじ: ${region.owner ?? "なし"}  じょうたい: ${region.lifecycle}`,
-      `きこう: ${BIOME_JA[map?.villages.find((v) => v.regionId === region.id)?.biome ?? Biome.Plains]}`,
+      `きこう: ${BIOME_JA[map?.villages.find((v) => v.regionId === region.id)?.biome ?? Biome.Plains]}  はってん: ${["むら", "まち", "とし"][map?.villages.find((v) => v.regionId === region.id)?.tier ?? 0]}`,
       `せいじ: ${ctx.isCouncil ? "ひょうぎかい" : "どくさいせい"}`,
       `どうぐづくり: ${ctx.mintingOpen ? "だれでも" : "あるじのみ"}`,
       `ぜいりつ: ${region.institutions.economyPolicy.baseCostRate} (さいてい ${region.institutions.economyPolicy.minCostRate})`,
@@ -559,6 +559,33 @@ function diplomacyMenu(ctx2: VillageContext): void {
   );
 }
 
+/** 駅 — ride the train between cities (movement is presentation; no world state moves). */
+function stationMenu(village: Village): void {
+  const destinations = (map?.villages ?? []).filter((v) => v.station && v.regionId !== village.regionId);
+  if (destinations.length === 0) {
+    ui.push(new Info(`${village.displayName}えき`, ["れっしゃは あるが、まだ ゆきさきが ない。", "べつの まちが「とし」に そだてば せんろが つながる。"], () => ui.pop()));
+    return;
+  }
+  ui.push(
+    new Menu(`${village.displayName}えき — どこへ いく?`, [
+      ...destinations.map((v) => ({ label: `${v.displayName} (${BIOME_JA[v.biome]})`, value: v.regionId })),
+      { label: "やめる", value: "cancel" },
+    ], (rid) => {
+      if (rid === "cancel") return ui.clear();
+      const dest = map?.villages.find((v) => v.regionId === rid);
+      if (dest) {
+        player.x = dest.gate[0];
+        player.y = dest.gate[1] + 1;
+        player.px = player.x * CELL;
+        player.py = player.y * CELL;
+        se("coin");
+        log.push(`でんしゃに のって ${dest.displayName}へ ついた!`);
+      }
+      ui.clear();
+    }, () => ui.clear()),
+  );
+}
+
 /** The gate signboard is now just the village's public notice. */
 function signMenu(village: Village): void {
   const ctx = villageContext(village);
@@ -686,6 +713,10 @@ function interact(): void {
     const village = map.villages.find((v) => v.stall[0] === fx && v.stall[1] === fy);
     if (village) return shopMenu(village);
   }
+  if (tile === Tile.Station) {
+    const village = map.villages.find((v) => v.station && v.station[0] === fx && v.station[1] === fy);
+    if (village) return stationMenu(village);
+  }
   if (tile === Tile.Chest) {
     const village = map.villages.find((v) => v.chest[0] === fx && v.chest[1] === fy);
     const treasury = snapshot.agents.find((a) => a.id === `treasury@${village?.regionId}`);
@@ -764,8 +795,13 @@ const MINI_COLORS: Record<number, string> = {
   [Tile.SnowTree]: "#a9c2d4",
   [Tile.Cactus]: "#2c8a4a",
   [Tile.Swamp]: "#4a5a30",
+  [Tile.Pavement]: "#8a8a8a",
+  [Tile.Rail]: "#5b4a30",
+  [Tile.BuildingWall]: "#9a9aa8",
+  [Tile.BuildingRoof]: "#3a3a44",
+  [Tile.Station]: "#c23a2e",
 };
-const MINI_SCALE = 5;
+const MINI_SCALE = 3;
 let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;
 
 function miniMapCanvas(m: WorldMap): HTMLCanvasElement {
@@ -1069,6 +1105,26 @@ function render(): void {
     ctx.fillRect(mob.px - camX + CELL / 2 - 3, by + 20, 6, 5);
     ctx.fillStyle = "#111";
     ctx.fillText(mob.bubble.text, bx + 7, by + 14);
+  }
+
+  // Trains shuttle along the rails, back and forth.
+  for (const rail of map.rails) {
+    if (rail.length < 4) continue;
+    const span = rail.length - 1;
+    const t = Math.floor(performance.now() / 130) % (span * 2);
+    const head = t <= span ? t : span * 2 - t;
+    for (let car = 0; car < 3; car++) {
+      const idx = Math.max(0, Math.min(span, head + (t <= span ? -car : car)));
+      const pt = rail[idx];
+      if (!pt) continue;
+      const px = pt[0] * CELL - camX + 6;
+      const py = pt[1] * CELL - camY + 10;
+      ctx.fillStyle = car === 0 ? "#c23a2e" : "#e8e8e8";
+      ctx.fillRect(px, py, 36, 24);
+      ctx.fillStyle = "#2a3a55";
+      ctx.fillRect(px + 5, py + 5, 10, 8);
+      ctx.fillRect(px + 21, py + 5, 10, 8);
+    }
   }
 
   const heroPair = sprites.heroFor(titleTier(title));

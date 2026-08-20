@@ -213,6 +213,84 @@ const CACTUS = [
   "ssssssssssssssss",
 ];
 
+const PAVEMENT = R("mmmmmmmmmmmmmmmm").map((row, y) => (y % 8 === 0 ? "xmmmmmmmxmmmmmmm" : y % 4 === 2 ? "mmmHmmmmmmmmHmmm" : row));
+
+const RAIL = [
+  "gggggggggggggggg",
+  "ggbbbbbbbbbbbbgg".replaceAll("gg", "gg"),
+  "gxxxxxxxxxxxxxxg",
+  "gggggggggggggggg",
+  "bbbbbbbbbbbbbbbb",
+  "xxxxxxxxxxxxxxxx",
+  "gggggggggggggggg",
+  "gggggggggggggggg",
+  "gggggggggggggggg",
+  "bbbbbbbbbbbbbbbb",
+  "xxxxxxxxxxxxxxxx",
+  "gggggggggggggggg",
+  "ggggggggggggggggg".slice(0, 16),
+  "gSggggggggggSggg".replaceAll("S", "b"),
+  "gggggggggggggggg",
+  "gggggggggggggggg",
+];
+
+const BUILDING_WALL = [
+  "mmmmmmmmmmmmmmmm",
+  "mxyyxmmxyyxmmxym",
+  "mxyyxmmxyyxmmxym",
+  "mmmmmmmmmmmmmmmm",
+  "mHHHHHHHHHHHHHHm",
+  "mxyyxmmxNNxmmxym",
+  "mxyyxmmxNNxmmxym",
+  "mmmmmmmmmmmmmmmm",
+  "mHHHHHHHHHHHHHHm",
+  "mxNNxmmxyyxmmxNm",
+  "mxNNxmmxyyxmmxNm",
+  "mmmmmmmmmmmmmmmm",
+  "mHHHHHHHHHHHHHHm",
+  "mxyyxmmxyyxmmxym",
+  "mxyyxmmxyyxmmxym",
+  "mmmmmmmmmmmmmmmm",
+];
+
+const BUILDING_ROOF = [
+  "xxxxxxxxxxxxxxxx",
+  "xmmmmmmmmmmmmmmx",
+  "xmHHHHHHHHHHHHmx",
+  "xmHmmmmmmmmmmHmx",
+  "xmHmxxxxmmmmmHmx",
+  "xmHmxeexmmmmmHmx",
+  "xmHmxxxxmmmmmHmx",
+  "xmHmmmmmmmmmmHmx",
+  "xmHmmmmmxxxmmHmx",
+  "xmHmmmmmxmxmmHmx",
+  "xmHmmmmmxxxmmHmx",
+  "xmHmmmmmmmmmmHmx",
+  "xmHHHHHHHHHHHHmx",
+  "xmmmmmmmmmmmmmmx",
+  "xxxxxxxxxxxxxxxx",
+  "mmmmmmmmmmmmmmmm",
+];
+
+const STATION = [
+  "xxxxxxxxxxxxxxxx",
+  "xrrrrrrrrrrrrrrx",
+  "xRRRRRRRRRRRRRRx",
+  "xrrrrrrrrrrrrrrx",
+  "xxxxxxxxxxxxxxxx",
+  "gxbggggggggggbxg",
+  "gxbgeeeeeeeegbxg",
+  "gxbgeyxxxxyegbxg",
+  "gxbgeeeeeeeegbxg",
+  "gxbggggggggggbxg",
+  "gxbggggggggggbxg",
+  "gxxxxxxxxxxxxxxg",
+  "gmmmmmmmmmmmmmmg",
+  "gmmmmmmmmmmmmmmg",
+  "gggggggggggggggg",
+  "gggggggggggggggg",
+];
+
 const STALL = [
   "gggggggggggggggg",
   "gxRRRReeeeRRRRxg",
@@ -471,6 +549,11 @@ export function buildSprites(): SpriteSet {
     [Tile.SnowTree, draw(SNOWTREE)],
     [Tile.Cactus, draw(CACTUS)],
     [Tile.Swamp, draw(SWAMP)],
+    [Tile.Pavement, draw(PAVEMENT)],
+    [Tile.Rail, draw(RAIL)],
+    [Tile.BuildingWall, draw(BUILDING_WALL)],
+    [Tile.BuildingRoof, draw(BUILDING_ROOF)],
+    [Tile.Station, draw(STATION)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();
