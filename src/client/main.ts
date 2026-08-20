@@ -8,11 +8,11 @@ import type { AgentView, ItemView, LogEventView, Snapshot } from "../shared";
 import { dayPhase, ParticleField, SkyShow, Weather, Wildlife } from "./ambience";
 import { npcLines } from "./dialogue";
 import { eventToMessage } from "./feed";
-import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, type WorldMap } from "./map";
+import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, villageContains, type WorldMap } from "./map";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
 import { classifyRegime, type GovernanceValue, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
 import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
-import { canShopHere, CATALOG, kindName, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
+import { canShopHere, CATALOG, friendlyPairs, kindName, STANCE_COLOR, STANCE_JA, stanceToward } from "./shop";
 import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
 import { buildSprites, CELL } from "./sprites";
 import { drawText, drawWindow, Info, Menu, MessageLog, TextInput, UiStack } from "./ui";
@@ -42,6 +42,37 @@ interface Critter {
   timer: number;
 }
 let critters: Critter[] = [];
+const construction = new Map<string, number>();
+const prevResidents = new Map<string, number>();
+let prevFriendships = new Set<string>();
+interface Tourist {
+  x: number;
+  y: number;
+  px: number;
+  py: number;
+  timer: number;
+  home: Village;
+}
+let tourists: Tourist[] = [];
+
+// たびのきろく — the personal travel journal (presentation-side, per browser).
+const JOURNAL_KEY = "vouchquest.journal";
+interface Journal {
+  visited: string[];
+  critters: string[];
+  rides: number;
+}
+function journal(): Journal {
+  try {
+    const j = JSON.parse(localStorage.getItem(JOURNAL_KEY) ?? "{}") as Partial<Journal>;
+    return { visited: j.visited ?? [], critters: j.critters ?? [], rides: j.rides ?? 0 };
+  } catch {
+    return { visited: [], critters: [], rides: 0 };
+  }
+}
+function saveJournal(j: Journal): void {
+  localStorage.setItem(JOURNAL_KEY, JSON.stringify(j));
+}
 
 function extraExtra(text: string): void {
   gogai = { text, until: performance.now() + 4600 };
@@ -144,12 +175,44 @@ async function refreshWorld(repositionHero: boolean): Promise<void> {
     }
     prevTiers.set(v.regionId, v.tier);
   }
+  // Construction: population growth turns into visible building work.
+  for (const v of map.villages) {
+    const residents = snap.agents.filter((a) => a.region === v.regionId && a.role !== "treasury").length;
+    const prev = prevResidents.get(v.regionId);
+    if (prev !== undefined && residents > prev) construction.set(v.regionId, performance.now() + 180_000);
+    prevResidents.set(v.regionId, residents);
+  }
+
+  // Sister cities: a NEW mutual friendship makes the front page, twice over.
+  const pairsNow = new Set(friendlyPairs(snap.regions).map(([a2, b2]) => `${a2}|${b2}`));
+  for (const pair of pairsNow) {
+    if (!prevFriendships.has(pair) && prevFriendships.size > 0) {
+      const [aId, bId] = pair.split("|");
+      const va = map.villages.find((v) => v.regionId === aId);
+      const vb = map.villages.find((v) => v.regionId === bId);
+      extraExtra(`ごうがい! ${va?.displayName ?? aId}と ${vb?.displayName ?? bId}が ゆうこうとしに!`);
+      if (va) particles.firework((va.x + va.w / 2) * CELL, (va.y + va.h / 2) * CELL);
+      if (vb) particles.firework((vb.x + vb.w / 2) * CELL, (vb.y + vb.h / 2) * CELL);
+    }
+  }
+  prevFriendships = pairsNow;
+
+  // Tourists visit cities and parties (the travel industry at work).
+  tourists = [];
+  for (const v of map.villages) {
+    if (!(v.tier >= 2 || v.station || festivals.has(v.regionId))) continue;
+    for (let i = 0; i < 2; i++) {
+      const spot = v.spots[Math.floor(Math.random() * v.spots.length)];
+      if (spot) tourists.push({ x: spot[0], y: spot[1], px: spot[0] * CELL, py: spot[1] * CELL, timer: Math.random() * 1500, home: v });
+    }
+  }
+
   // Wild critters, seeded per biome out in the open country.
   critters = [];
   for (let tries = 0; critters.length < 24 && tries < 400; tries++) {
     const cx = 4 + Math.floor(Math.random() * (MAP_W - 8));
     const cy = 4 + Math.floor(Math.random() * (MAP_H - 8));
-    if (isSolid(map, cx, cy) || map.villages.some((v) => cx >= v.x && cx < v.x + v.w && cy >= v.y && cy < v.y + v.h)) continue;
+    if (isSolid(map, cx, cy) || map.villages.some((v) => villageContains(v, cx, cy))) continue;
     const biome = biomeAt(cx, cy);
     const kind =
       biome === Biome.Desert ? "scorpion" : biome === Biome.Snow ? "yukidaruma" : biome === Biome.Swamp ? "obake" : Math.random() < 0.5 ? "slime" : "usagi";
@@ -423,8 +486,44 @@ function villageInfo(ctx: VillageContext): void {
       `きんこ: ${treasury?.balances.currency ?? 0}G  じゅうみん: ${residents.length}にん`,
       ...residents.map((r) => `  ${r.id} (${roleJa(r.role)}) ${r.balances.currency}G`),
       region.openProposal ? `ひょうけつちゅう! とうひょう ${region.openProposal.votes.length}` : "ひょうけつは ない",
+      (() => {
+        const friends = friendlyPairs(snapshot?.regions ?? [])
+          .filter(([a, b]) => a === region.id || b === region.id)
+          .map(([a, b]) => (a === region.id ? b : a));
+        return friends.length > 0 ? `ゆうこうとし: ${friends.join(", ")}` : "ゆうこうとしは まだ ない";
+      })(),
     ], () => ui.pop()),
   );
+}
+
+/** しさつ — study a foreign village's institutions and take lessons home. */
+function inspectVillage(ctx2: VillageContext): void {
+  const { region } = ctx2;
+  const homeId = snapshot?.me.agentId?.split("@")[1];
+  const home = snapshot?.regions.find((r) => r.id === homeId);
+  const theirTax = region.institutions.economyPolicy.baseCostRate;
+  const theirRegime = REGIME_JA[classifyRegime(region.institutions.governance as GovernanceValue)].label;
+  const residents = snapshot?.agents.filter((a) => a.region === region.id && a.role !== "treasury") ?? [];
+  const treasury = snapshot?.agents.find((a) => a.id === `treasury@${region.id}`)?.balances.currency ?? 0;
+  const lessons: string[] = [
+    `せいじ: ${theirRegime} / ぜいりつ: ${Math.round(theirTax * 100)}%`,
+    `じゅうみん ${residents.length}にん / きんこ ${treasury}G / どうぐづくり: ${ctx2.mintingOpen ? "だれでも" : "あるじのみ"}`,
+  ];
+  if (home) {
+    const myTax = home.institutions.economyPolicy.baseCostRate;
+    if (theirTax < myTax) lessons.push(`【まなび】ぜいが わがまちより やすい。こうえきを よぶ ちえか…`);
+    else if (theirTax > myTax) lessons.push(`【まなび】ぜいは たかいが、きんこは ${treasury}G。ふくしに つかえそうだ`);
+    if (ctx2.mintingOpen) lessons.push("【まなび】ちゅうぞうを ひらくと ものづくりが さかんに なるようだ");
+    if (ctx2.isCouncil) lessons.push("【まなび】ひょうぎの しくみは ごうい に じかんが かかるが あんてい する");
+  }
+  const j = journal();
+  if (!j.visited.includes(region.id)) {
+    j.visited.push(region.id);
+    saveJournal(j);
+    lessons.push(`★ しさつメモに きろくした (${j.visited.length}むらめ)`);
+    se("fanfare");
+  }
+  ui.push(new Info(`しさつレポート: ${region.displayName}`, lessons, () => ui.pop()));
 }
 
 /** Pick a constitution: every regime the raw governance primitive can express. */
@@ -451,6 +550,7 @@ function hallMenu(village: Village): void {
   ui.push(
     new Menu(`${region.displayName} やくば`, [
       { label: "むらの じょうほう", value: "info" },
+      { label: "しさつする (まなび)", value: "inspect", disabled: ctx.livesHere },
       { label: "この むらに ひっこす", value: "migrate", disabled: !heroAgent() || ctx.livesHere },
       { label: "いじゅうしゃを まねく", value: "admit", disabled: !ctx.isOwner },
       {
@@ -466,6 +566,7 @@ function hallMenu(village: Village): void {
       { label: "やめる", value: "cancel" },
     ], (value) => {
       if (value === "info") villageInfo(ctx);
+      else if (value === "inspect") inspectVillage(ctx);
       else if (value === "migrate") void runAct({ kind: "migrate", toRegion: region.id }, `${region.id}へ ひっこす`);
       else if (value === "admit") {
         ui.push(
@@ -692,6 +793,9 @@ function stationMenu(village: Village): void {
         player.py = player.y * CELL;
         se("coin");
         log.push(`でんしゃに のって ${dest.displayName}へ ついた!`);
+        const j = journal();
+        j.rides++;
+        saveJournal(j);
       }
       ui.clear();
     }, () => ui.clear()),
@@ -709,7 +813,9 @@ function questJournal(): void {
   if (!ctx) return;
   const rows = questProgress(ctx).map(({ quest, done }) => `${done ? "★" : "・"} ${quest.title} — ${quest.desc}`);
   const doneCount = rows.filter((r) => r.startsWith("★")).length;
-  ui.push(new Info(`クエストちょう (${doneCount}/${rows.length})`, rows, () => ui.pop()));
+  const j = journal();
+  rows.push("", `たびのきろく: しさつ ${j.visited.length}むら / いきもの ${j.critters.length}しゅ / でんしゃ ${j.rides}かい`);
+  ui.push(new Info(`クエストちょう (${doneCount}/${rows.length - 2})`, rows, () => ui.pop()));
 }
 
 function worldRecords(): void {
@@ -813,6 +919,11 @@ function interact(): void {
       yukidaruma: ["ゆきだるまだ。だれが つくったのだろう…", "…いま、うごかなかったか?"],
       obake: ["ひやりと した かぜが ふいた。", "おばけは にっこり わらった。わるい こは いないか、と。"],
     };
+    const j = journal();
+    if (!j.critters.includes(critter.kind)) {
+      j.critters.push(critter.kind);
+      saveJournal(j);
+    }
     ui.push(new Info("いきもの", lines[critter.kind] ?? ["なにかが いる。"], () => ui.pop()));
     return;
   }
@@ -1071,6 +1182,29 @@ function update(dt: number): void {
     }
   }
 
+  // Tourists stroll the sights.
+  for (const t2 of tourists) {
+    const tx2 = t2.x * CELL;
+    const ty2 = t2.y * CELL;
+    if (t2.px !== tx2 || t2.py !== ty2) {
+      const step = 1.3 * (dt / 16.7);
+      t2.px += Math.sign(tx2 - t2.px) * Math.min(step, Math.abs(tx2 - t2.px));
+      t2.py += Math.sign(ty2 - t2.py) * Math.min(step, Math.abs(ty2 - t2.py));
+      continue;
+    }
+    t2.timer -= dt;
+    if (t2.timer > 0) continue;
+    t2.timer = 700 + Math.random() * 1600;
+    const dirs2 = [[0, 1], [0, -1], [1, 0], [-1, 0]] as const;
+    const [ddx, ddy] = dirs2[Math.floor(Math.random() * dirs2.length)] ?? [0, 0];
+    const nx2 = t2.x + ddx;
+    const ny2 = t2.y + ddy;
+    if (villageContains(t2.home, nx2, ny2) && walkable(nx2, ny2)) {
+      t2.x = nx2;
+      t2.y = ny2;
+    }
+  }
+
   // Critters amble about the wild.
   for (const c of critters) {
     const cx = c.x * CELL;
@@ -1088,7 +1222,7 @@ function update(dt: number): void {
     const [dx2, dy2] = dirs[Math.floor(Math.random() * dirs.length)] ?? [0, 0];
     const nx = c.x + dx2;
     const ny = c.y + dy2;
-    if (map && !isSolid(map, nx, ny) && !map.villages.some((v) => nx >= v.x && nx < v.x + v.w && ny >= v.y && ny < v.y + v.h)) {
+    if (map && !isSolid(map, nx, ny) && !map.villages.some((v) => villageContains(v, nx, ny))) {
       c.x = nx;
       c.y = ny;
     }
@@ -1178,7 +1312,7 @@ function update(dt: number): void {
     mob.timer = mob.target ? 420 + Math.random() * 400 : 800 + Math.random() * 1800;
     const nx = mob.x + dx;
     const ny = mob.y + dy;
-    const inside = !home || (nx > home.x && nx < home.x + home.w - 1 && ny > home.y && ny < home.y + home.h - 1);
+    const inside = !home || villageContains(home, nx, ny);
     if (inside && walkable(nx, ny) && !(nx === player.x && ny === player.y)) {
       mob.x = nx;
       mob.y = ny;
@@ -1257,6 +1391,18 @@ function render(): void {
       ctx.fillStyle = "#ffffff";
       ctx.fillText(REGIME_JA[regime].label, fpx - 10, fpy + 50);
     }
+    // Construction banners while a settlement is actively growing.
+    if (construction.has(village.regionId)) {
+      if (performance.now() > (construction.get(village.regionId) ?? 0)) construction.delete(village.regionId);
+      else {
+        ctx.font = '14px "DotGothic16", monospace';
+        ctx.fillStyle = "#ffb020";
+        ctx.fillText("🔨こうじちゅう", (village.x + 1) * CELL - camX, (village.y - 1) * CELL - camY + 38);
+        if (Math.random() < 0.06) {
+          particles.sparkle((village.x + 1 + Math.random() * (village.w - 2)) * CELL, (village.y + 2 + Math.random() * (village.h - 4)) * CELL, "#c8a060");
+        }
+      }
+    }
     // Festival lanterns swing along the fence while the party lasts.
     if (festivals.has(village.regionId)) {
       const sway = Math.sin(performance.now() / 260) * 3;
@@ -1302,6 +1448,12 @@ function render(): void {
     ctx.fillRect(mob.px - camX + CELL / 2 - 3, by + 20, 6, 5);
     ctx.fillStyle = "#111";
     ctx.fillText(mob.bubble.text, bx + 7, by + 14);
+  }
+
+  // Tourists (white travelers snapping the sights).
+  const touristPair = sprites.roles["tourist"];
+  for (const t2 of tourists) {
+    if (touristPair) ctx.drawImage(touristPair[Math.floor(performance.now() / 220) % 2 === 0 ? 0 : 1], t2.px - camX, t2.py - camY);
   }
 
   // Wild critters.

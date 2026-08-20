@@ -82,11 +82,14 @@ describe("diplomacy", () => {
     const vb = friendly.villages[1];
     expect(va && vb).toBeTruthy();
     if (!va || !vb) return;
-    // The corner of the L-shaped road is paved.
-    expect(tileAt(friendly, va.gate[0], vb.gate[1] + 1)).toBe(Tile.Path);
-    // Without friendship, that same tile is untouched terrain, not a road.
+    // The road lane south of both settlements is paved along its polyline.
+    const road = friendly.roads[0] ?? [];
+    expect(road.length).toBeGreaterThan(3);
+    const paved = road.filter(([x, y]) => tileAt(friendly, x, y) === Tile.Path).length;
+    expect(paved / road.length).toBeGreaterThan(0.8);
+    // Without friendship there is no road at all.
     const cold = buildMap(snapshot([region("asahi", 1), region("tsuki", 2)], "Rei@asahi"));
-    expect(tileAt(cold, va.gate[0], vb.gate[1] + 1)).not.toBe(Tile.Path);
+    expect(cold.roads.length).toBe(0);
   });
 
   test("every village carves a shop stall", () => {

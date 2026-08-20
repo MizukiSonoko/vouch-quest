@@ -685,7 +685,7 @@ export function buildSprites(): SpriteSet {
       }
       return cached;
     },
-    roles: { artisan: pair("a"), merchant: pair("o"), broker: pair("v"), treasury: pair("m") },
+    roles: { artisan: pair("a"), merchant: pair("o"), broker: pair("v"), treasury: pair("m"), tourist: pair("e") },
     critters: { slime: draw(SLIME), scorpion: draw(SCORPION), yukidaruma: draw(YUKIDARUMA), obake: draw(OBAKE), usagi: draw(USAGI) },
   };
 }

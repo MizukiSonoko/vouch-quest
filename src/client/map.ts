@@ -104,6 +104,8 @@ export interface Village {
   readonly regionId: string;
   readonly displayName: string;
   readonly biome: Biome;
+  /** Every tile this settlement occupies (packed y*MAP_W+x) — shapes are organic, not boxes. */
+  readonly cells: ReadonlySet<number>;
   /** Development: 0 むら, 1 まち, 2 とし (real population + treasury drive it). */
   readonly tier: number;
   /** The train station platform, if this settlement grew into a city. */
@@ -225,6 +227,10 @@ export function villageRng(regionId: string): () => number {
   };
 }
 
+export function villageContains(v: Village, x: number, y: number): boolean {
+  return v.cells.has(y * MAP_W + x);
+}
+
 export function tileAt(map: WorldMap, x: number, y: number): Tile {
   if (x < 0 || y < 0 || x >= MAP_W || y >= MAP_H) return Tile.Water;
   return (map.tiles[y * MAP_W + x] ?? Tile.Water) as Tile;
@@ -258,29 +264,60 @@ function carveVillage(
   // A full city paves over its biome; towns and villages keep the local ground.
   const [g1, g2] = tier >= 2 ? ([Tile.Pavement, Tile.Pavement] as const) : biomeGround(biome);
 
-  // Clear the plot to the biome's ground, fence it, open a south gate.
+  // The settlement's shape is an organic blob: a radial polygon whose radius
+  // wobbles per angle. Star-convex, so the interior is always connected.
+  const ANGLES = 16;
+  const wobble = Array.from({ length: ANGLES }, () => 0.68 + rng() * 0.32);
+  const ccx = vx + w / 2;
+  const ccy = vy + h / 2;
+  const insideMask = (x: number, y: number): boolean => {
+    const dx = (x + 0.5 - ccx) / (w / 2);
+    const dy = (y + 0.5 - ccy) / (h / 2);
+    const r = Math.hypot(dx, dy);
+    const a = ((Math.atan2(dy, dx) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * ANGLES;
+    const i0 = Math.floor(a) % ANGLES;
+    const f = a - Math.floor(a);
+    const m = (wobble[i0] ?? 1) * (1 - f) + (wobble[(i0 + 1) % ANGLES] ?? 1) * f;
+    return r <= m;
+  };
+  const cells = new Set<number>();
   for (let y = vy; y < vy + h; y++) {
     for (let x = vx; x < vx + w; x++) {
-      set(tiles, x, y, (x + y) % 7 === 0 ? g2 : g1);
+      if (insideMask(x, y)) cells.add(y * MAP_W + x);
     }
   }
-  for (let x = vx; x < vx + w; x++) {
-    set(tiles, x, vy, Tile.Fence);
-    set(tiles, x, vy + h - 1, Tile.Fence);
-  }
-  for (let y = vy; y < vy + h; y++) {
-    set(tiles, vx, y, Tile.Fence);
-    set(tiles, vx + w - 1, y, Tile.Fence);
-  }
-  const gx = vx + 3 + Math.floor(rng() * (w - 6));
-  set(tiles, gx, vy + h - 1, Tile.Path);
-  set(tiles, gx, vy + h - 2, Tile.Path);
-  set(tiles, gx, vy + h, Tile.Path);
+  const inCells = (x: number, y: number): boolean => cells.has(y * MAP_W + x);
+  const isBoundary = (x: number, y: number): boolean =>
+    inCells(x, y) && (!inCells(x + 1, y) || !inCells(x - 1, y) || !inCells(x, y + 1) || !inCells(x, y - 1));
 
-  const inside = (x: number, y: number): boolean => x > vx && x < vx + w - 1 && y > vy && y < vy + h - 1;
+  // Ground everywhere inside; a fence traces the organic edge.
+  for (const packed of cells) {
+    const y = Math.floor(packed / MAP_W);
+    const x = packed % MAP_W;
+    set(tiles, x, y, isBoundary(x, y) ? Tile.Fence : (x + y) % 7 === 0 ? g2 : g1);
+  }
+
+  // The gate: the southernmost fence cell near the center column, opened as path.
+  let gx = Math.floor(ccx);
+  let gy = vy + h - 1;
+  outer: for (let dxs = 0; dxs < w; dxs++) {
+    const tryX = Math.floor(ccx) + (dxs % 2 === 0 ? dxs / 2 : -(dxs + 1) / 2);
+    for (let y = vy + h - 1; y > vy; y--) {
+      if (inCells(tryX, y) && inCells(tryX, y - 1) && !isBoundary(tryX, y - 1)) {
+        gx = tryX;
+        gy = y;
+        break outer;
+      }
+    }
+  }
+  set(tiles, gx, gy, Tile.Path);
+  set(tiles, gx, gy + 1, Tile.Path);
+  set(tiles, gx, gy + 2, Tile.Path);
+
+    const inside = (x: number, y: number): boolean => inCells(x, y) && !isBoundary(x, y);
   const protectedCells = new Set<string>();
   const key = (x: number, y: number): string => `${x},${y}`;
-  for (let y = vy + 1; y < vy + h; y++) protectedCells.add(key(gx, y)); // the gate lane stays open
+  for (let y = gy - 4; y <= gy; y++) protectedCells.add(key(gx, y)); // the gate lane stays open
 
   interface Build {
     readonly roof: Tile;
@@ -427,28 +464,25 @@ function carveVillage(
   }
   set(tiles, chest[0], chest[1], Tile.Chest);
 
-  // The gate signboard.
-  let sign: readonly [number, number] = [gx > vx + 3 ? gx - 2 : gx + 2, vy + h - 2];
-  if (!isFree(sign[0], sign[1])) sign = [gx + 2, vy + h - 2] as const;
+  // The gate signboard, somewhere just inside the gate.
+  let sign: readonly [number, number] = [gx - 2, gy - 1];
+  if (!isFree(sign[0], sign[1])) sign = [gx + 2, gy - 1] as const;
+  for (let tries = 0; !isFree(sign[0], sign[1]) && tries < 30; tries++) {
+    sign = [vx + 2 + Math.floor(rng() * (w - 4)), vy + 2 + Math.floor(rng() * (h - 4))] as const;
+  }
   set(tiles, sign[0], sign[1], Tile.Sign);
 
   // The notice board, pinned near the signboard.
   let poster: readonly [number, number] = [sign[0] - 1, sign[1]];
-  if (!isFree(poster[0], poster[1])) {
-    poster = [sign[0] + 1, sign[1]] as const;
-    for (let tries = 0; !isFree(poster[0], poster[1]) && tries < 20; tries++) {
-      poster = [vx + 2 + Math.floor(rng() * (w - 4)), vy + h - 3] as const;
-    }
+  for (let tries = 0; !isFree(poster[0], poster[1]) && tries < 30; tries++) {
+    poster = [vx + 2 + Math.floor(rng() * (w - 4)), vy + 2 + Math.floor(rng() * (h - 4))] as const;
   }
   set(tiles, poster[0], poster[1], Tile.Poster);
 
   // The item shop's stall, on a free cell near the gate (opposite side from the sign).
-  let stall: readonly [number, number] = [gx > vx + 3 ? gx + 2 : gx - 2, vy + h - 3];
-  if (!isFree(stall[0], stall[1])) {
-    stall = [gx + 2, vy + h - 3] as const;
-    for (let tries = 0; !isFree(stall[0], stall[1]) && tries < 20; tries++) {
-      stall = [vx + 2 + Math.floor(rng() * (w - 4)), vy + 3 + Math.floor(rng() * (h - 6))] as const;
-    }
+  let stall: readonly [number, number] = [gx + 2, gy - 2];
+  for (let tries = 0; !isFree(stall[0], stall[1]) && tries < 30; tries++) {
+    stall = [vx + 2 + Math.floor(rng() * (w - 4)), vy + 2 + Math.floor(rng() * (h - 4))] as const;
   }
   set(tiles, stall[0], stall[1], Tile.Stall);
 
@@ -502,13 +536,15 @@ function carveVillage(
   // A city earns a train station: a platform beside the gate road, outside the fence.
   let station: readonly [number, number] | null = null;
   if (tier >= 2) {
-    station = [gx + 2 < MAP_W ? gx + 2 : gx - 2, vy + h + 1] as const;
+    let sy = gy + 2;
+    while (inCells(gx + 2, sy) && sy < MAP_H - 3) sy++;
+    station = [gx + 2, sy] as const;
     set(tiles, station[0], station[1], Tile.Station);
     set(tiles, station[0] - 1, station[1], Tile.Pavement);
     set(tiles, station[0] + 1, station[1], Tile.Pavement);
   }
 
-  return { x: vx, y: vy, w, h, biome, tier, station, gate: [gx, vy + h - 1] as const, sign, poster, chest, stall, hall, mint, court, spots };
+  return { x: vx, y: vy, w, h, biome, cells, tier, station, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, spots };
 }
 
 export function buildMap(snapshot: Snapshot): WorldMap {
@@ -559,8 +595,7 @@ export function buildMap(snapshot: Snapshot): WorldMap {
 
   // Diplomacy made visible: mutually friendly villages get a road between their
   // gates. Roads never cut through a village plot — a fence stays a fence.
-  const inAnyPlot = (x: number, y: number): boolean =>
-    villages.some((v) => x >= v.x && x < v.x + v.w && y >= v.y && y < v.y + v.h);
+  const inAnyPlot = (x: number, y: number): boolean => villages.some((v) => villageContains(v, x, y));
   const pave = (x: number, y: number): void => {
     if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= MAP_H - 2 || inAnyPlot(x, y)) return;
     set(tiles, x, y, Tile.Path);
@@ -572,18 +607,21 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     if (!a || !b) continue;
     const [ax, ayGate] = a.gate;
     const [bx, byGate] = b.gate;
-    const ay = ayGate + 1;
-    const by = byGate + 1;
+    // Route through a lane south of BOTH settlements so no blob swallows the road.
+    const laneY = Math.max(ayGate, byGate) + 2;
     const path: (readonly [number, number])[] = [];
-    const dirY = Math.sign(by - ay) || 1;
-    for (let y = ay; y !== by; y += dirY) {
+    for (let y = ayGate + 1; y <= laneY; y++) {
       pave(ax, y);
       path.push([ax, y] as const);
     }
     const dirX = Math.sign(bx - ax) || 1;
     for (let x = ax; x !== bx + dirX; x += dirX) {
-      pave(x, by);
-      path.push([x, by] as const);
+      pave(x, laneY);
+      path.push([x, laneY] as const);
+    }
+    for (let y = laneY; y > byGate; y--) {
+      pave(bx, y);
+      path.push([bx, y] as const);
     }
     if (path.length > 3) roads.push(path);
   }
@@ -591,8 +629,7 @@ export function buildMap(snapshot: Snapshot): WorldMap {
   // Rails: the stations form a line — technology stitches the cities together.
   const rails: (readonly [number, number])[][] = [];
   const stations = villages.filter((v) => v.station).sort((a, b) => a.x - b.x || a.y - b.y);
-  const inAnyPlot2 = (x: number, y: number): boolean =>
-    villages.some((v) => x >= v.x && x < v.x + v.w && y >= v.y && y < v.y + v.h);
+  const inAnyPlot2 = (x: number, y: number): boolean => villages.some((v) => villageContains(v, x, y));
   for (let i = 0; i + 1 < stations.length; i++) {
     const a = stations[i]?.station;
     const b = stations[i + 1]?.station;
