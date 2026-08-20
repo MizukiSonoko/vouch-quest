@@ -22,6 +22,13 @@ if (!process.env["ANTHROPIC_API_KEY"]) {
 
 // ---- current genome ------------------------------------------------------------
 
+interface Mutation {
+  id: number;
+  kind: string;
+  title: string;
+  lines: string[];
+}
+
 interface Genome {
   version: number;
   updatedAt?: string;
@@ -30,6 +37,7 @@ interface Genome {
   wares: { kind: string; name: string; price: number; blurb: string }[];
   professions: { name: string; role: string; craft: string; greeting: string }[];
   headlines: string[];
+  mutations: Mutation[];
 }
 
 function loadGenome(): Genome {
@@ -42,9 +50,10 @@ function loadGenome(): Genome {
       wares: g.wares ?? [],
       professions: g.professions ?? [],
       headlines: g.headlines ?? [],
+      mutations: g.mutations ?? [],
     };
   } catch {
-    return { version: 0, vocab: {}, chatter: {}, wares: [], professions: [], headlines: [] };
+    return { version: 0, vocab: {}, chatter: {}, wares: [], professions: [], headlines: [], mutations: [] };
   }
 }
 
@@ -104,7 +113,7 @@ async function worldBrief(): Promise<string> {
 const ADDITIONS_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["vocab", "chatter", "wares", "professions", "headlines"],
+  required: ["vocab", "chatter", "wares", "professions", "headlines", "mutation"],
   properties: {
     vocab: {
       type: "array",
@@ -151,6 +160,16 @@ const ADDITIONS_SCHEMA = {
       },
     },
     headlines: { type: "array", items: { type: "string" } },
+    mutation: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "title", "lines"],
+      properties: {
+        kind: { type: "string", enum: ["fashion", "legend", "boom", "omen", "festival"] },
+        title: { type: "string" },
+        lines: { type: "array", items: { type: "string" } },
+      },
+    },
   },
 } as const;
 
@@ -160,7 +179,11 @@ interface Additions {
   wares: { kind: string; name: string; price: number; blurb: string }[];
   professions: { name: string; role: string; craft: string; greeting: string }[];
   headlines: string[];
+  mutation: { kind: string; title: string; lines: string[] };
 }
+
+const MUTATION_SEEDS = ["りゅうこうの ふくそう", "むかしばなしの ふっかつ", "なぞの しょうばいブーム", "そらの いへん", "まぼろしの いきもの", "あたらしい あそび", "こいの うわさ", "きんの ねだんの うわさ", "ふるい のろい", "みらいの よげん"];
+const MUTATION_SEED = MUTATION_SEEDS[Math.floor(Math.random() * MUTATION_SEEDS.length)];
 
 async function askClaude(genome: Genome, brief: string): Promise<Additions> {
   const client = new Anthropic();
@@ -178,6 +201,7 @@ async function askClaude(genome: Genome, brief: string): Promise<Additions> {
       "- price は 1〜500 の整数。既存の kind と重複しない新しいものを。",
       "- 世界の観察(発展した町、金持ち、最近のイベント傾向、政治体制)を反映した内容にすること。",
       "- 追加量: vocab≦8, chatter 合計≦14行, wares≦2, professions≦2, headlines≦5。",
+      `- さらに《とつぜんへんい》を必ず1件: kind は fashion(流行)/legend(伝説)/boom(ブーム)/omen(前兆)/festival(祭り)。title は24字以内、lines は住民が口にする噂 2〜4行。今回の変異の種は『${MUTATION_SEED}』— 世界の実データに絡めた、予想外で大胆なものを。`,
       "- 職業は世界に実在する住民として雇われ、craft を鋳造して暮らします。現実の職業の多様性(medic, brewer, poet, miner, weaver, courier...)を参考に。",
     ].join("\n"),
     messages: [
@@ -235,6 +259,15 @@ function merge(genome: Genome, add: Additions): { genome: Genome; grown: string[
     ) {
       genome.professions.push({ name: p.name, role: p.role, craft: p.craft, greeting: p.greeting });
       grown.push(`profession:${p.name}`);
+    }
+  }
+  const mu = add.mutation;
+  if (mu && ["fashion", "legend", "boom", "omen", "festival"].includes(mu.kind) && okShort(mu.title, 24)) {
+    const mlines = (mu.lines ?? []).filter((l) => okShort(l, 64)).slice(0, 4);
+    if (mlines.length > 0) {
+      genome.mutations.push({ id: genome.version + 1, kind: mu.kind, title: mu.title, lines: mlines });
+      genome.mutations = genome.mutations.slice(-12);
+      grown.push(`mutation:${mu.kind}:${mu.title}`);
     }
   }
   const fresh = (add.headlines ?? []).filter((h) => okShort(h, 64)).slice(0, 5);

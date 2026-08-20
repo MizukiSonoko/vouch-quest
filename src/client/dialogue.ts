@@ -59,7 +59,8 @@ const BIOME_TALK: Readonly<Record<Biome, readonly string[]>> = {
 /** Merge genome chatter pools into the live vocabulary (data only, capped). */
 export function registerChatter(pools: Readonly<Record<string, readonly string[]>>): void {
   for (const [key, lines] of Object.entries(pools)) {
-    const clean = lines.filter((l) => typeof l === "string" && l.length > 0 && l.length <= 64).slice(0, 100);
+    const seen = new Set([...CHILD_TALK, ...ELDER_TALK, ...CITY_TALK, ...HAMLET_TALK, ...FESTIVAL_TALK, ...MARRIED_TALK, ...POWER_TALK, ...DARK_TALK, ...Object.values(GREETINGS).flat()]);
+    const clean = lines.filter((l) => typeof l === "string" && l.length > 0 && l.length <= 64 && !seen.has(l)).slice(0, 100);
     if (clean.length === 0) continue;
     if (key === "child") CHILD_TALK.push(...clean);
     else if (key === "elder") ELDER_TALK.push(...clean);

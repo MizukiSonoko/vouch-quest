@@ -667,6 +667,20 @@ async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region
     }
     const client = clientFor(me.id);
     await ensureRegistered(client, me.id);
+    // とつぜんへんい: a prospering genome-born artisan may found a guild town
+    // named after their craft — a REAL settlement born from an invented trade.
+    if (rand() < 0.06 && me.balances.currency >= 60 && !w.regions.some((r) => r.owner === prof.name)) {
+      const bare = clientFor(prof.name);
+      await ensureRegistered(bare, prof.name);
+      const taken = new Set(w.regions.map((r) => r.id));
+      const rid = !taken.has(prof.craft) ? prof.craft : `${prof.craft}${Math.floor(rand() * 900) + 100}`;
+      say(prof.name, `founds the ${prof.craft} guild town ${rid}!`, await bare.found(prof.name, rid, rid.charAt(0).toUpperCase() + rid.slice(1)));
+      await sleep(900);
+      await bare.amend(prof.name, rid, { policy: "items", value: { minting: "anyone" } });
+      await sleep(900);
+      say(me.id, `moves the workshop to ${rid}`, await client.migrate(me.id, rid));
+      return;
+    }
     const region = w.regions.find((r) => r.id === me.region);
     const neighbors = w.agents.filter((a) => a.region === me.region && a.id !== me.id && a.role !== "treasury");
     const roll = rand();

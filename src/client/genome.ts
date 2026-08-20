@@ -18,6 +18,13 @@ export interface GenomeProfession {
   readonly greeting: string;
 }
 
+export interface GenomeMutation {
+  readonly id: number;
+  readonly kind: "fashion" | "legend" | "boom" | "omen" | "festival";
+  readonly title: string;
+  readonly lines: readonly string[];
+}
+
 export interface Genome {
   readonly version: number;
   readonly vocab: Readonly<Record<string, string>>;
@@ -25,6 +32,7 @@ export interface Genome {
   readonly wares: readonly GenomeWare[];
   readonly professions: readonly GenomeProfession[];
   readonly headlines: readonly string[];
+  readonly mutations: readonly GenomeMutation[];
 }
 
 const isShortText = (x: unknown, max = 64): x is string => typeof x === "string" && x.length > 0 && x.length <= max;
@@ -61,7 +69,16 @@ export function validateGenome(raw: unknown): Genome | null {
     }
   }
   const headlines = (Array.isArray(g["headlines"]) ? (g["headlines"] as unknown[]) : []).filter((h): h is string => isShortText(h, 64)).slice(0, 60);
-  return { version: typeof g["version"] === "number" ? g["version"] : 0, vocab, chatter, wares, professions, headlines };
+  const MUT_KINDS = ["fashion", "legend", "boom", "omen", "festival"] as const;
+  const mutations: GenomeMutation[] = [];
+  for (const m of Array.isArray(g["mutations"]) ? (g["mutations"] as unknown[]) : []) {
+    const o = m as Record<string, unknown>;
+    const kind = MUT_KINDS.find((k) => k === o["kind"]);
+    if (!kind || typeof o["id"] !== "number" || !isShortText(o["title"], 24) || !Array.isArray(o["lines"])) continue;
+    const lines = (o["lines"] as unknown[]).filter((l): l is string => isShortText(l, 64)).slice(0, 4);
+    if (lines.length > 0) mutations.push({ id: o["id"], kind, title: o["title"], lines });
+  }
+  return { version: typeof g["version"] === "number" ? g["version"] : 0, vocab, chatter, wares, professions, headlines, mutations };
 }
 
 /** Fetch the live genome from the content proxy; null on any failure. */

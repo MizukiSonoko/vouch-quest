@@ -17,6 +17,10 @@ describe("genome validation — LLM output is data, never code", () => {
         { name: "bad name", role: "hacker", craft: "x", greeting: "!" },
       ],
       headlines: ["みだし", ""],
+      mutations: [
+        { id: 3, kind: "boom", title: "わがしブーム", lines: ["いま わがしが あつい!", ""] },
+        { id: 4, kind: "hack", title: "x", lines: ["y"] },
+      ],
     });
     expect(g).not.toBeNull();
     if (!g) return;
@@ -27,6 +31,9 @@ describe("genome validation — LLM output is data, never code", () => {
     expect(g.wares.length).toBe(1);
     expect(g.professions.length).toBe(1);
     expect(g.headlines).toEqual(["みだし"]);
+    expect(g.mutations.length).toBe(1);
+    expect(g.mutations[0]?.kind).toBe("boom");
+    expect(g.mutations[0]?.lines).toEqual(["いま わがしが あつい!"]);
   });
 
   test("garbage input yields null, not a crash", () => {

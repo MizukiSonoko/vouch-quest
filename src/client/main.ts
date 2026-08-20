@@ -492,6 +492,58 @@ async function runAct(action: Record<string, unknown>, doing: string): Promise<v
   }
 }
 
+/** みのうえばなし: one resident's whole life, folded honestly from the log. */
+function biographyOf(agentId: string): string[] {
+  let paid = 0;
+  let got = 0;
+  let trades = 0;
+  let vouchOut = 0;
+  let vouchIn = 0;
+  let minted = 0;
+  let sickness = 0;
+  let bornSeq: number | null = null;
+  const moves: string[] = [];
+  for (const e of allEvents) {
+    const p = e.payload;
+    if (e.type === "agent.admitted") {
+      const id = (p["admission"] as Record<string, unknown> | undefined)?.["id"] ?? p["id"];
+      if (id === agentId) bornSeq = e.seq;
+    } else if (e.type === "agent.migrated") {
+      if (p["agentId"] === agentId && typeof p["toRegion"] === "string") moves.push(p["toRegion"] as string);
+    } else if (e.type === "economy.settled") {
+      const entries = (p["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+      const mine = entries.find((x) => x.agentId === agentId);
+      if (mine && typeof mine.currencyDelta === "number" && mine.currencyDelta !== 0) {
+        trades++;
+        if (mine.currencyDelta > 0) got += mine.currencyDelta;
+        else paid -= mine.currencyDelta;
+      }
+    } else if (e.type === "agent.vouched") {
+      if (p["from"] === agentId) vouchOut++;
+      if (p["to"] === agentId) vouchIn++;
+    } else if (e.type === "item.minted") {
+      if (p["owner"] === agentId) {
+        if (p["kind"] === BYOKI) sickness++;
+        else minted++;
+      }
+    }
+  }
+  const name = agentId.split("@")[0] ?? agentId;
+  const lines: string[] = [];
+  lines.push(bornSeq !== null ? `だい${bornSeq}のできごとで この せかいに やってきた。` : "いつからか この せかいに いる ふるつわものだ。");
+  if (moves.length > 0) lines.push(`これまで ${moves.length}かい ひっこした (いまは ${moves[moves.length - 1]})。`);
+  else lines.push("うまれた むらから いちども でたことがない。");
+  if (trades > 0) lines.push(`とりひき ${trades}かい — かせぎ ${got}G / つかい ${paid}G ${got > paid * 2 ? "(なかなかの やりて)" : paid > got * 2 ? "(きまえが よすぎる…)" : ""}`);
+  else lines.push("まだ いちども しょうばいを したことがない。");
+  if (vouchOut + vouchIn > 0) lines.push(`しんらいを ${vouchOut}かい おくり、${vouchIn}かい うけとった。${vouchOut > vouchIn * 3 && vouchOut >= 3 ? "…かたおもいが おおいらしい。" : vouchIn > vouchOut * 3 && vouchIn >= 3 ? "みんなの にんきものだ。" : ""}`);
+  if (minted > 0) lines.push(`つくった どうぐは ${minted}こ。しょくにんの てだ。`);
+  if (sickness > 0) lines.push(`びょうきを ${sickness}かい のりこえた。`);
+  const spouse = weddingBook.isMarried(agentId);
+  if (spouse) lines.push(`はんりょが いる。しあわせそうだ。`);
+  lines.push(`— ${name}の みのうえばなし、これにて。`);
+  return lines;
+}
+
 function npcMenu(mob: Mob): void {
   const a = mob.agent;
   const items = myItems();
@@ -500,6 +552,7 @@ function npcMenu(mob: Mob): void {
       a.id,
       [
         { label: "はなす", value: "talk" },
+        { label: "みのうえを きく", value: "bio" },
         { label: "ゴールドを わたす", value: "gold" },
         { label: "ほしょうする", value: "vouch" },
         { label: "どうぐを わたす", value: "item", disabled: items.length === 0 },
@@ -532,6 +585,8 @@ function npcMenu(mob: Mob): void {
               `すんでいるむら: ${a.region}`,
             ], () => ui.pop()),
           );
+        } else if (value === "bio") {
+          ui.push(new Info(`${a.id}の みのうえ`, biographyOf(a.id), () => ui.pop()));
         } else if (value === "gold") {
           ui.push(
             new TextInput(`いくら わたす? (もちがね ${heroAgent()?.balances.currency ?? 0}G)`, { numeric: true, maxLen: 7 }, (v) => {
@@ -1465,6 +1520,122 @@ function miniMapCanvas(m: WorldMap): HTMLCanvasElement {
   return c;
 }
 
+/** けいざいしんぶん (E key): the whole economy, folded live from the log. */
+class EconomyOverlay {
+  constructor(private readonly onClose: () => void) {}
+
+  handleKey(key: string): void {
+    if (["Escape", "Enter", " ", "e", "E", "x", "z"].includes(key)) this.onClose();
+  }
+
+  render(c: CanvasRenderingContext2D, width: number, height: number): void {
+    if (!snapshot) return;
+    const w = Math.min(920, width - 40);
+    const h = Math.min(620, height - 40);
+    const x = (width - w) / 2;
+    const y = (height - h) / 2;
+    drawWindow(c, x, y, w, h);
+    c.textBaseline = "top";
+    drawText(c, "けいざいしんぶん", x + 24, y + 14, "#ffd75e");
+    c.font = '15px "DotGothic16", monospace';
+
+    const folk = snapshot.agents.filter((a2) => a2.role !== "treasury" && !isDead(a2.region));
+    const balances = folk.map((a2) => a2.balances.currency).sort((p1, p2) => p1 - p2);
+    const total = balances.reduce((s2, v) => s2 + v, 0);
+    // Gini: mean absolute difference over 2*mean (0 = equal, 1 = one owns all).
+    let giniNum = 0;
+    for (let i = 0; i < balances.length; i++) giniNum += (2 * (i + 1) - balances.length - 1) * (balances[i] ?? 0);
+    const gini = total > 0 ? giniNum / (balances.length * total) : 0;
+    const settles = allEvents.filter((ev) => ev.type === "economy.settled");
+    let volume = 0;
+    for (const ev of settles) {
+      const entries = (ev.payload["entries"] as { currencyDelta?: number }[] | undefined) ?? [];
+      for (const en of entries) if ((en.currencyDelta ?? 0) > 0) volume += en.currencyDelta ?? 0;
+    }
+    c.fillStyle = "#ffffff";
+    c.fillText(`つうかそうりょう ${total}G  ひとりあたり ${folk.length > 0 ? Math.round(total / folk.length) : 0}G  ジニけいすう ${gini.toFixed(2)} ${gini > 0.4 ? "(かくさ大)" : gini > 0.25 ? "(かくさ中)" : "(びょうどう)"}`, x + 24, y + 44);
+    c.fillText(`とりひき ${settles.length}けん / うごいた おかね ${volume}G / けっこん ${weddingBook.marriages}くみ`, x + 24, y + 66);
+
+    // ---- trade activity sparkline (12 buckets over the last 600 events) ----
+    drawText(c, "とりひきの いきおい (ちかごろ)", x + 24, y + 96, "#8fd0ff");
+    const recent = allEvents.slice(-600);
+    const bucketN = 12;
+    const per = Math.max(1, Math.ceil(recent.length / bucketN));
+    const buckets: number[] = Array.from({ length: bucketN }, () => 0);
+    recent.forEach((ev, i) => {
+      if (ev.type === "economy.settled") buckets[Math.min(bucketN - 1, Math.floor(i / per))]!++;
+    });
+    const bMax = Math.max(1, ...buckets);
+    for (let i = 0; i < bucketN; i++) {
+      const bh = Math.round(((buckets[i] ?? 0) / bMax) * 54);
+      c.fillStyle = "#4a9fe8";
+      c.fillRect(x + 24 + i * 24, y + 178 - bh, 18, bh);
+    }
+    c.strokeStyle = "#5a6a85";
+    c.strokeRect(x + 22, y + 122, bucketN * 24 + 4, 58);
+
+    // ---- wealth histogram ----
+    drawText(c, "とみの ぶんぷ", x + 360, y + 96, "#8fd0ff");
+    const bins = [0, 10, 25, 50, 100, 200];
+    const labels = ["<10", "<25", "<50", "<100", "<200", "200+"];
+    const hist: number[] = Array.from({ length: bins.length }, () => 0);
+    for (const b of balances) {
+      let bi = bins.length - 1;
+      for (let i = 0; i < bins.length - 1; i++) {
+        if (b < bins[i + 1]!) {
+          bi = i;
+          break;
+        }
+      }
+      hist[bi]!++;
+    }
+    const hMax = Math.max(1, ...hist);
+    c.font = '12px "DotGothic16", monospace';
+    for (let i = 0; i < hist.length; i++) {
+      const bh = Math.round(((hist[i] ?? 0) / hMax) * 44);
+      c.fillStyle = "#3fd05e";
+      c.fillRect(x + 360 + i * 34, y + 168 - bh, 26, bh);
+      c.fillStyle = "#c9d4e8";
+      c.fillText(labels[i] ?? "", x + 360 + i * 34, y + 172);
+    }
+
+    // ---- village treasuries ----
+    c.font = '15px "DotGothic16", monospace';
+    drawText(c, "むらの きんこ ランキング (ぜいりつ / せいじ / じんこう)", x + 24, y + 206, "#8fd0ff");
+    const rows = snapshot.regions
+      .filter((r) => r.id !== AFTERLIFE)
+      .map((r) => ({
+        r,
+        bank: snapshot?.agents.find((a2) => a2.id === `treasury@${r.id}`)?.balances.currency ?? 0,
+        pop: snapshot?.agents.filter((a2) => a2.region === r.id && a2.role !== "treasury").length ?? 0,
+      }))
+      .sort((p1, p2) => p2.bank - p1.bank || p2.pop - p1.pop)
+      .slice(0, 8);
+    rows.forEach(({ r, bank, pop }, i) => {
+      const regime = REGIME_JA[classifyRegime(r.institutions.governance as GovernanceValue)].label;
+      c.fillStyle = i === 0 ? "#ffd75e" : "#ffffff";
+      c.fillText(
+        `${i + 1}. ${r.displayName}  ${bank}G  ぜい${Math.round(r.institutions.economyPolicy.baseCostRate * 100)}%  ${regime}  ${pop}にん`,
+        x + 24,
+        y + 232 + i * 24,
+      );
+    });
+
+    // ---- richest citizens ----
+    drawText(c, "ちょうじゃばんづけ", x + 500, y + 206, "#8fd0ff");
+    [...folk]
+      .sort((p1, p2) => p2.balances.currency - p1.balances.currency)
+      .slice(0, 8)
+      .forEach((a2, i) => {
+        c.fillStyle = i === 0 ? "#ffd75e" : "#ffffff";
+        c.fillText(`${i + 1}. ${a2.id}  ${a2.balances.currency}G`, x + 500, y + 232 + i * 24);
+      });
+
+    c.fillStyle = "#8090a8";
+    c.fillText("Eか Escで とじる", x + 24, y + h - 32);
+  }
+}
+
 class MapOverlay {
   constructor(private readonly onClose: () => void) {}
 
@@ -1565,6 +1736,11 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "l" || e.key === "L") {
     se("confirm");
     ui.push(new LogViewer());
+    return;
+  }
+  if (e.key === "e" || e.key === "E") {
+    se("confirm");
+    ui.push(new EconomyOverlay(() => ui.clear()));
     return;
   }
   if (e.key === "Enter" || e.key === " " || e.key === "z") {
@@ -2303,17 +2479,37 @@ async function poll(): Promise<void> {
 }
 
 // Debug handle (harmless in prod; lets tooling inspect position/keys).
-// The genome: LLM-grown vocabulary/wares/chatter, validated as pure data.
-void loadGenome().then((g) => {
-  if (!g) return;
+// The genome: LLM-grown vocabulary/wares/chatter/mutations, validated as pure
+// data. Reloaded every 10 minutes so the world keeps mutating while you play.
+let genomeVersionSeen = 0;
+
+function applyGenome(g: NonNullable<Awaited<ReturnType<typeof loadGenome>>>): void {
   registerKindNames(g.vocab);
   registerChatter(g.chatter);
   registerWares(g.wares);
   genomeHeadlines = g.headlines;
   genomeProfs = new Map(g.professions.map((pr) => [pr.name, { craft: pr.craft, greeting: pr.greeting }]));
-  const grown = Object.keys(g.vocab).length + g.wares.length + g.professions.length;
-  if (grown > 0) log.push(`せかいの ことばが しんかしている… (ゲノム v${g.version})`);
-});
+
+  // とつぜんへんい: unseen mutations break as extra-extra news, and their
+  // rumor lines enter every villager's mouth.
+  const seenRaw = localStorage.getItem("vouchquest.mutseen");
+  const seen = new Set<number>(seenRaw ? (JSON.parse(seenRaw) as number[]) : []);
+  const KIND_JA: Record<string, string> = { fashion: "りゅうこう", legend: "でんせつ", boom: "ブーム", omen: "ぜんちょう", festival: "まつり" };
+  for (const m of g.mutations) {
+    registerChatter({ generic: m.lines });
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    if (genomeVersionSeen > 0) extraExtra(`とつぜんへんい! 【${KIND_JA[m.kind] ?? m.kind}】${m.title}`);
+  }
+  localStorage.setItem("vouchquest.mutseen", JSON.stringify([...seen].slice(-50)));
+
+  if (g.version > genomeVersionSeen && genomeVersionSeen > 0) log.push(`せかいが しんかした… (ゲノム v${g.version})`);
+  else if (genomeVersionSeen === 0 && g.version > 0) log.push(`せかいの ことばが しんかしている… (ゲノム v${g.version})`);
+  genomeVersionSeen = g.version;
+}
+
+void loadGenome().then((g) => g && applyGenome(g));
+setInterval(() => void loadGenome().then((g) => g && applyGenome(g)), 10 * 60 * 1000);
 
 Object.defineProperty(window, "__vq", { value: { player, held, mobs: () => mobs.map((m) => [m.agent.id, m.x, m.y, Math.round(m.timer), m.target]), tile: (x: number, y: number) => (map ? tileAt(map, x, y) : -1), solid: (x: number, y: number) => (map ? isSolid(map, x, y) : true) }, configurable: true });
 
