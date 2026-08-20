@@ -4,10 +4,13 @@
 // (institutions / migrate / govern), and found new villages on empty land.
 // Every action becomes a signed command; every world event scrolls the newspaper.
 
-import type { AgentView, ItemView, Snapshot } from "../shared";
+import type { AgentView, ItemView, LogEventView, Snapshot } from "../shared";
+import { npcLines } from "./dialogue";
 import { eventToMessage } from "./feed";
 import { buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, type WorldMap } from "./map";
-import { fetchLog, fetchWorld, postAct, postRegister } from "./net";
+import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
+import { heroStats, heroTitle, type QuestContext, questProgress } from "./quests";
+import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
 import { buildSprites, CELL } from "./sprites";
 import { drawText, drawWindow, Info, Menu, MessageLog, TextInput, UiStack } from "./ui";
 
@@ -45,7 +48,8 @@ interface Player {
 let snapshot: Snapshot | null = null;
 let map: WorldMap | null = null;
 let mobs: Mob[] = [];
-let lastSeq = 0;
+let allEvents: LogEventView[] = [];
+const questsDone = new Set<string>();
 const player: Player = { x: 0, y: 0, px: 0, py: 0, dx: 0, dy: 1, moving: false, frame: 0 };
 const held = new Set<string>();
 const SPEED = 3.2; // px per frame at 60fps-ish
@@ -82,7 +86,6 @@ async function refreshWorld(repositionHero: boolean): Promise<void> {
     frame: 0,
     home: map?.villages.find((v) => v.regionId === p.agent.region),
   }));
-  lastSeq = snap.logLength;
   if (repositionHero || isSolid(map, player.x, player.y)) {
     const [sx, sy] = heroSpawn(snap, map);
     player.x = sx;
@@ -90,6 +93,40 @@ async function refreshWorld(repositionHero: boolean): Promise<void> {
     player.px = sx * CELL;
     player.py = sy * CELL;
     player.moving = false;
+  }
+}
+
+function questContext(): QuestContext | null {
+  if (!snapshot) return null;
+  return { stats: heroStats(allEvents, snapshot.me.heroName), snapshot, hero: heroAgent() };
+}
+
+/** Pull any log events we have not seen; narrate them; return whether anything arrived. */
+async function syncEvents(announce: boolean): Promise<boolean> {
+  const fresh = (await fetchAllLog(allEvents.length)).filter((e) => e.seq >= allEvents.length);
+  if (fresh.length === 0) return false;
+  allEvents.push(...fresh);
+  if (announce) for (const event of fresh) log.push(`▶ ${eventToMessage(event)}`);
+  return true;
+}
+
+let title = "かけだしの たびびと";
+
+/** Recompute quest completion; on `announce`, celebrate anything newly achieved. */
+function checkQuests(announce: boolean): void {
+  const ctx = questContext();
+  if (!ctx) return;
+  title = heroTitle(ctx);
+  for (const { quest, done } of questProgress(ctx)) {
+    if (!done || questsDone.has(quest.id)) continue;
+    questsDone.add(quest.id);
+    if (announce) {
+      log.push(`★ クエストたっせい! 「${quest.title}」`);
+      se("fanfare");
+    }
+  }
+  if (announce && questsDone.size === questProgress(ctx).length) {
+    log.push("すべての クエストを なしとげた! あなたこそ でんせつの ゆうしゃだ!");
   }
 }
 
@@ -101,8 +138,12 @@ async function runAct(action: Record<string, unknown>, doing: string): Promise<v
   try {
     const result = await postAct(action);
     if (result.ok) {
+      se("coin");
       await refreshWorld(false);
+      await syncEvents(true);
+      checkQuests(true);
     } else {
+      se("error");
       log.push(`だめだった… (${result.reason})`);
     }
   } catch (error) {
@@ -125,8 +166,11 @@ function npcMenu(mob: Mob): void {
       ],
       (value) => {
         if (value === "talk") {
+          const owner = snapshot?.regions.find((r) => r.id === a.region)?.owner ?? null;
           ui.push(
             new Info(a.id, [
+              ...npcLines(a, snapshot?.items ?? [], owner),
+              "",
               `しょくぎょう: ${roleJa(a.role)}`,
               `しょじきん: ${a.balances.currency}G  くれじっと: ${a.balances.credit}`,
               `ひょうばん: ${a.reputation}  しんらい: ${a.trust}`,
@@ -337,6 +381,37 @@ function signMenu(village: Village): void {
   if (ctx) villageInfo(ctx);
 }
 
+function questJournal(): void {
+  const ctx = questContext();
+  if (!ctx) return;
+  const rows = questProgress(ctx).map(({ quest, done }) => `${done ? "★" : "・"} ${quest.title} — ${quest.desc}`);
+  const doneCount = rows.filter((r) => r.startsWith("★")).length;
+  ui.push(new Info(`クエストちょう (${doneCount}/${rows.length})`, rows, () => ui.pop()));
+}
+
+function worldRecords(): void {
+  const m = snapshot;
+  if (!m) return;
+  const folk = m.agents.filter((a) => a.role !== "treasury");
+  const byGold = [...folk].sort((a, b) => b.balances.currency - a.balances.currency).slice(0, 3);
+  const byTrust = [...folk].sort((a, b) => b.trust - a.trust).slice(0, 3);
+  const byPeople = [...m.regions]
+    .map((r) => ({ r, n: folk.filter((a) => a.region === r.id).length }))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 3);
+  ui.push(
+    new Info("せかいの きろく", [
+      `むら ${m.regions.length} / じゅうみん ${folk.length}にん / どうぐ ${m.items.length}こ / できごと ${m.logLength}`,
+      "～ちょうじゃばんづけ~",
+      ...byGold.map((a, i) => ` ${i + 1}. ${a.id}  ${a.balances.currency}G`),
+      "～しんらいばんづけ~",
+      ...byTrust.map((a, i) => ` ${i + 1}. ${a.id}  しんらい${a.trust}`),
+      "～にぎわうむら~",
+      ...byPeople.map(({ r, n }, i) => ` ${i + 1}. ${r.displayName} (${r.id})  ${n}にん`),
+    ], () => ui.pop()),
+  );
+}
+
 function fieldMenu(): void {
   const hero = heroAgent();
   ui.push(
@@ -344,9 +419,12 @@ function fieldMenu(): void {
       "コマンド?",
       [
         { label: "つよさ", value: "status" },
+        { label: "クエスト", value: "quests" },
         { label: "どうぐ", value: "items" },
+        { label: "ちず (M)", value: "map" },
         { label: "むらを たてる", value: "found" },
         { label: "せかいの きろく", value: "world" },
+        { label: `おと: ${bgmEnabled() ? "ON" : "OFF"}`, value: "sound" },
         { label: "やめる", value: "cancel" },
       ],
       (value) => {
@@ -354,6 +432,7 @@ function fieldMenu(): void {
           ui.push(
             new Info(snapshot?.me.heroName ?? "たびびと", hero
               ? [
+                  `しょうごう: ${title}`,
                   `エージェント: ${hero.id}`,
                   `しょじきん: ${hero.balances.currency}G  くれじっと: ${hero.balances.credit}`,
                   `ひょうばん: ${hero.reputation}  しんらい: ${hero.trust}`,
@@ -364,6 +443,15 @@ function fieldMenu(): void {
         } else if (value === "items") {
           const items = myItems();
           ui.push(new Info("どうぐぶくろ", items.length ? items.map((i) => `${i.kind} (${i.id})`) : ["なにも もっていない。"], () => ui.pop()));
+        } else if (value === "quests") {
+          questJournal();
+        } else if (value === "map") {
+          ui.pop();
+          ui.push(new MapOverlay(() => ui.clear()));
+        } else if (value === "sound") {
+          const on = toggleBgm();
+          log.push(on ? "♪ おんがくが ながれはじめた。" : "おんがくが やんだ。");
+          ui.clear();
         } else if (value === "found") {
           ui.push(
             new TextInput("むらの なまえは? (romaji こもじ)", { lowercase: true, maxLen: 16 }, (rid) => {
@@ -375,17 +463,7 @@ function fieldMenu(): void {
             }, () => ui.pop()),
           );
         } else if (value === "world") {
-          const m = snapshot;
-          ui.push(
-            new Info("せかいの きろく", m
-              ? [
-                  `むらのかず: ${m.regions.length}`,
-                  `じゅうみん: ${m.agents.filter((a) => a.role !== "treasury").length}にん`,
-                  `どうぐ: ${m.items.length}こ`,
-                  `できごとのかず: ${m.logLength}`,
-                ]
-              : ["…"], () => ui.pop()),
-          );
+          worldRecords();
         } else ui.clear();
       },
       () => ui.clear(),
@@ -424,6 +502,81 @@ function interact(): void {
   fieldMenu();
 }
 
+// ---- world map overlay ------------------------------------------------------
+
+const MINI_COLORS: Record<number, string> = {
+  [Tile.Grass]: "#1c7c2c",
+  [Tile.Grass2]: "#238234",
+  [Tile.Tree]: "#0d4718",
+  [Tile.Water]: "#1a4fbb",
+  [Tile.Sand]: "#d8c07a",
+  [Tile.Fence]: "#8a5a2b",
+  [Tile.Path]: "#e0cd92",
+  [Tile.HouseWall]: "#cfc6a8",
+  [Tile.HouseRoof]: "#b33326",
+  [Tile.HouseDoor]: "#3a2a16",
+  [Tile.Sign]: "#e8c840",
+  [Tile.Chest]: "#c49a45",
+  [Tile.HallRoof]: "#24408e",
+  [Tile.HallDoor]: "#24408e",
+  [Tile.MintRoof]: "#b8860b",
+  [Tile.MintDoor]: "#b8860b",
+  [Tile.CourtRoof]: "#e8e8e8",
+  [Tile.CourtDoor]: "#e8e8e8",
+  [Tile.Rock]: "#6a6a6a",
+  [Tile.Flower]: "#f0a0c0",
+};
+const MINI_SCALE = 5;
+let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;
+
+function miniMapCanvas(m: WorldMap): HTMLCanvasElement {
+  if (miniCache?.forMap === m) return miniCache.canvas;
+  const c = document.createElement("canvas");
+  c.width = MAP_W * MINI_SCALE;
+  c.height = MAP_H * MINI_SCALE;
+  const mc = c.getContext("2d");
+  if (mc) {
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        mc.fillStyle = MINI_COLORS[tileAt(m, x, y)] ?? "#000";
+        mc.fillRect(x * MINI_SCALE, y * MINI_SCALE, MINI_SCALE, MINI_SCALE);
+      }
+    }
+  }
+  miniCache = { forMap: m, canvas: c };
+  return c;
+}
+
+class MapOverlay {
+  constructor(private readonly onClose: () => void) {}
+
+  handleKey(key: string): void {
+    if (["Escape", "Enter", " ", "m", "M", "x", "z"].includes(key)) this.onClose();
+  }
+
+  render(c: CanvasRenderingContext2D, width: number, height: number): void {
+    if (!map) return;
+    const w = MAP_W * MINI_SCALE + 48;
+    const h = MAP_H * MINI_SCALE + 76;
+    const x = (width - w) / 2;
+    const y = (height - h) / 2;
+    drawWindow(c, x, y, w, h);
+    drawText(c, "せかいちず", x + 24, y + 16, "#ffd75e");
+    const ox = x + 24;
+    const oy = y + 52;
+    c.drawImage(miniMapCanvas(map), ox, oy);
+    c.font = '13px "DotGothic16", monospace';
+    for (const v of map.villages) {
+      c.fillStyle = "#ffffff";
+      c.fillText(v.displayName, ox + v.x * MINI_SCALE, oy + v.y * MINI_SCALE - 3);
+    }
+    if (Math.floor(performance.now() / 300) % 2 === 0) {
+      c.fillStyle = "#ffffff";
+      c.fillRect(ox + player.x * MINI_SCALE - 2, oy + player.y * MINI_SCALE - 2, MINI_SCALE + 4, MINI_SCALE + 4);
+    }
+  }
+}
+
 function roleJa(role: string): string {
   return { artisan: "しょくにん", merchant: "しょうにん", broker: "なかがいにん", treasury: "きんこばん" }[role] ?? role;
 }
@@ -432,11 +585,23 @@ function roleJa(role: string): string {
 
 window.addEventListener("keydown", (e) => {
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) e.preventDefault();
+  startAudio();
   if (ui.active) {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") se("cursor");
+    else if (e.key === "Enter" || e.key === " " || e.key === "z") se("confirm");
+    else if (e.key === "Escape" || e.key === "x") se("cancel");
     ui.handleKey(e.key);
     return;
   }
-  if (e.key === "Enter" || e.key === " " || e.key === "z") interact();
+  if (e.key === "m" || e.key === "M") {
+    se("confirm");
+    ui.push(new MapOverlay(() => ui.clear()));
+    return;
+  }
+  if (e.key === "Enter" || e.key === " " || e.key === "z") {
+    se("confirm");
+    interact();
+  }
   else {
     held.add(e.key);
     // A single tap moves one tile even if the key is released before the next
@@ -565,12 +730,15 @@ function render(): void {
 
   // HUD
   const hero = heroAgent();
-  drawWindow(ctx, 12, 12, 250, hero ? 140 : 66);
+  drawWindow(ctx, 12, 12, 264, hero ? 164 : 66);
   drawText(ctx, snapshot.me.heroName ?? "ななしの たびびと", 32, 28, "#ffd75e");
   if (hero) {
-    drawText(ctx, `G: ${hero.balances.currency}`, 32, 56);
-    drawText(ctx, `しんらい: ${hero.trust}`, 32, 82);
-    drawText(ctx, `ひょうばん: ${hero.reputation}`, 32, 108);
+    ctx.font = '15px "DotGothic16", monospace';
+    ctx.fillStyle = "#8fd0ff";
+    ctx.fillText(title, 32, 56);
+    drawText(ctx, `G: ${hero.balances.currency}`, 32, 80);
+    drawText(ctx, `しんらい: ${hero.trust}`, 32, 106);
+    drawText(ctx, `ひょうばん: ${hero.reputation}`, 32, 132);
   }
 
   log.render(ctx, w, h);
@@ -607,10 +775,9 @@ function onboard(): void {
 async function poll(): Promise<void> {
   if (!snapshot) return;
   try {
-    const events = (await fetchLog(lastSeq)).filter((e) => e.seq >= lastSeq);
-    if (events.length > 0) {
-      for (const event of events) log.push(`▶ ${eventToMessage(event)}`);
+    if (await syncEvents(true)) {
       await refreshWorld(false);
+      checkQuests(true);
     }
   } catch {
     // The node blinked; the next poll retries. Movement should not stutter for it.
@@ -631,6 +798,8 @@ function frame(now: number): void {
 void (async () => {
   try {
     await refreshWorld(true);
+    allEvents = await fetchAllLog();
+    checkQuests(false);
     onboard();
   } catch (error) {
     log.push(error instanceof Error ? error.message : "せかいに つながらない…");

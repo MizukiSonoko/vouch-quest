@@ -22,6 +22,16 @@ export async function fetchLog(since: number): Promise<LogEventView[]> {
   return (await reads.log(since)) as LogEventView[];
 }
 
+/** The whole world history, paginated (the node serves at most 1000 events per read). */
+export async function fetchAllLog(since = 0): Promise<LogEventView[]> {
+  const all: LogEventView[] = [];
+  for (;;) {
+    const page = await fetchLog(since + all.length);
+    all.push(...page);
+    if (page.length < 1000) return all;
+  }
+}
+
 export async function postAct(action: Record<string, unknown>): Promise<ActResult> {
   const heroName = loadHeroName();
   if (!heroName) return { ok: false, reason: "no hero yet — name your hero first" };
