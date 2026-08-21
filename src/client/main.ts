@@ -14,6 +14,7 @@ import { BUILDING_CATEGORIES, buildingCount, getBuildings } from "./buildings";
 import { loadGenome } from "./genome";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
 import { classifyRegime, type GovernanceValue, lawLayer, lawText, municipalRank, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
+import { foldProgress, GATE, LETTERS, type Progress } from "./progress";
 import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
 import { allWares, canShopHere, CATALOG, friendlyPairs, kindName, prefectures, registerKindNames, registerWares, STANCE_COLOR, STANCE_JA, stanceToward, type Ware } from "./shop";
 import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
@@ -512,6 +513,8 @@ async function runAct(action: Record<string, unknown>, doing: string): Promise<v
       await refreshWorld(false);
       checkQuests(true);
       celebrate();
+      refreshProgress(true);
+      xpFloats.push({ text: "+けいけん", x: player.px, y: player.py - 12, until: performance.now() + 1400 });
     } else {
       se("error");
       log.push(`だめだった… (${result.reason})`);
@@ -591,6 +594,40 @@ const petTrail = { x: 0, y: 0 };
 /** ぼうえんきょう: a borrowed viewpoint — look at a far village without moving. */
 let spy: { x: number; y: number; until: number } | null = null;
 let heroEmote: { text: string; until: number } | null = null;
+/** The fun spine: level and era goals, folded from the hero's real deeds. */
+let heroProgress: Progress | null = null;
+let xpFloats: { text: string; x: number; y: number; until: number }[] = [];
+
+function gateOk(gateKey: string): boolean {
+  const need = GATE[gateKey] ?? 1;
+  return (heroProgress?.level ?? 1) >= need;
+}
+
+function gateTag(gateKey: string): string {
+  const need = GATE[gateKey] ?? 1;
+  return (heroProgress?.level ?? 1) >= need ? "" : ` (Lv${need}で かいきん)`;
+}
+
+function refreshProgress(announce: boolean): void {
+  const prevLevel = heroProgress?.level ?? Number(localStorage.getItem("vouchquest.lvl") ?? "0");
+  const prevGoals = heroProgress?.goals.filter((g) => g.done).length ?? -1;
+  heroProgress = foldProgress(allEvents, snapshot?.me.agentId ?? null, snapshot?.me.heroName ?? null);
+  localStorage.setItem("vouchquest.lvl", String(heroProgress.level));
+  if (!announce) return;
+  const doneNow = heroProgress.goals.filter((g) => g.done).length;
+  if (prevGoals >= 0 && doneNow > prevGoals) {
+    se("fanfare");
+    log.push("☆ じだいの めあてを たっせい! ボーナスけいけんを えた!");
+    xpFloats.push({ text: "+15 けいけん!", x: player.px, y: player.py - 20, until: performance.now() + 1800 });
+  }
+  if (prevLevel > 0 && heroProgress.level > prevLevel) {
+    extraExtra(`レベルアップ! しんらいレベル ${heroProgress.level} に なった!`);
+    const letter = LETTERS[heroProgress.level];
+    if (letter) {
+      setTimeout(() => ui.push(new Info(`みちびきのてがみ — Lv${heroProgress?.level ?? 0}`, [...letter], () => ui.clear())), 1200);
+    }
+  }
+}
 
 /** A wedding in progress: the couple and guests gather at the town hall. */
 let wedding: { a: string; b: string; village: Village; until: number } | null = null;
@@ -652,11 +689,11 @@ function npcMenu(mob: Mob): void {
         { label: "みのうえを きく", value: "bio" },
         { label: "ゴールドを わたす", value: "gold" },
         { label: "ほしょうする", value: "vouch" },
-        { label: "こくはくする", value: "propose", disabled: weddingBook.isMarried(a.id) || !!(snapshot?.me.agentId && weddingBook.isMarried(snapshot.me.agentId)) },
+        { label: `こくはくする${gateTag("propose2")}`, value: "propose", disabled: !gateOk("propose2") || weddingBook.isMarried(a.id) || !!(snapshot?.me.agentId && weddingBook.isMarried(snapshot.me.agentId)) },
         { label: "ほしいものを きく", value: "want" },
         { label: "おみまいする (やくそう)", value: "care", disabled: !snapshot?.items.some((i) => i.owner === a.id && i.kind === BYOKI) || !myItems().some((i) => i.kind === "herb") },
-        { label: "でしいりする (10G)", value: "apprentice", disabled: !genomeProfOf(a.id) },
-        { label: "よきんする (りそく10%)", value: "deposit", disabled: (a.id.split("@")[0] ?? "") !== "Ginko" },
+        { label: `でしいりする (10G)${gateTag("apprentice")}`, value: "apprentice", disabled: !gateOk("apprentice") || !genomeProfOf(a.id) },
+        { label: `よきんする (りそく10%)${gateTag("deposit")}`, value: "deposit", disabled: !gateOk("deposit") || (a.id.split("@")[0] ?? "") !== "Ginko" },
         { label: "どうぐを わたす", value: "item", disabled: items.length === 0 },
         { label: "やめる", value: "cancel" },
       ],
@@ -955,9 +992,9 @@ function hallMenu(village: Village): void {
     new Menu(`${region.displayName} やくば`, [
       { label: "むらの じょうほう", value: "info" },
       { label: "むらの きろく (いれいひ)", value: "memorial" },
-      { label: region.salePrice !== null ? `この むらを かいとる (${region.salePrice}G)` : "かいとる (うりに でていない)", value: "buy", disabled: region.salePrice === null || ctx.isOwner || !heroAgent() },
-      { label: "むらづくりに きふする", value: "donate", disabled: heroAgent()?.region !== region.id },
-      { label: "ふどうさん (うる・ゆずる・たたむ)", value: "estate", disabled: !ctx.isOwner },
+      { label: region.salePrice !== null ? `この むらを かいとる (${region.salePrice}G)${gateTag("buyRegion")}` : "かいとる (うりに でていない)", value: "buy", disabled: !gateOk("buyRegion") || region.salePrice === null || ctx.isOwner || !heroAgent() },
+      { label: `むらづくりに きふする${gateTag("donate")}`, value: "donate", disabled: !gateOk("donate") || heroAgent()?.region !== region.id },
+      { label: `ふどうさん (うる・ゆずる・たたむ)${gateTag("estate")}`, value: "estate", disabled: !gateOk("estate") || !ctx.isOwner },
       { label: ctx.isCouncil ? "ぜいせい (さいばんしょで ていあん)" : "ぜいせいを あらためる", value: "tax", disabled: !ctx.isOwner || ctx.isCouncil },
       { label: "しさつする (まなび)", value: "inspect", disabled: ctx.livesHere },
       { label: "この むらに ひっこす", value: "migrate", disabled: !heroAgent() || ctx.livesHere },
@@ -1300,11 +1337,18 @@ function buildMenu(): void {
     ui.push(new Info("けんちく", ["めのまえの じめんには たてられない。", "くさちや すなちに むかって たてよう。"], () => ui.pop()));
     return;
   }
+  if (!gateOk("buildDecor")) {
+    ui.push(new Info("けんちく", [`けんちくは Lv${GATE["buildDecor"]}で かいきんされる。`, "とりひきや ほしょうで けいけんを つもう。"], () => ui.pop()));
+    return;
+  }
   const gold = me.balances.currency;
   const catalog = getBuildings();
   ui.push(
     new Menu(`なにを たてる? (ぜん${buildingCount()}しゅ / もちがね ${gold}G)`, [
-      ...BUILDING_CATEGORIES.map((c) => ({ label: c, value: c })),
+      ...BUILDING_CATEGORIES.map((c) => {
+        const gk = c === "すまい" ? "buildHome" : c === "みせ・しごと" ? "buildShop" : c === "こうきょう" ? "buildCivic" : "buildDecor";
+        return { label: `${c}${gateTag(gk)}`, value: c, disabled: !gateOk(gk) };
+      }),
       { label: "やめる", value: "cancel" },
     ], (cat) => {
       if (cat === "cancel") return ui.clear();
@@ -1449,6 +1493,13 @@ function requestBoard(): string[] {
     void residents;
   }
 
+  if (heroProgress && heroProgress.goals.length > 0) {
+    lines.unshift("");
+    for (const g of [...heroProgress.goals].reverse()) {
+      lines.unshift(`${g.done ? "☆" : "・"} ${g.label} (${g.have}/${g.need})${g.done ? " たっせい!" : ""}`);
+    }
+    lines.unshift("― じだいの めあて (たっせいで +15けいけん) ―");
+  }
   const spot = treasureSpot();
   if (spot && !myItems().some((i) => i.kind === "takara")) {
     lines.push(`◆ たからのうわさ: ちずの (${Math.round(spot[0] / 10) * 10}, ${Math.round(spot[1] / 10) * 10}) ふきんに なにかが ねむる…`);
@@ -1671,12 +1722,12 @@ function fieldMenu(): void {
         { label: "いらいのふだ (いま できること)", value: "requests" },
         { label: "できることずかん (C)", value: "compendium" },
         { label: "どうぐ", value: "items" },
-        { label: "ものづくり (ならったわざ)", value: "craft" },
+        { label: `ものづくり (ならったわざ)${gateTag("craft")}`, value: "craft", disabled: !gateOk("craft") },
         { label: "けんちく (めのまえに たてる)", value: "build" },
-        { label: "だいどうげいをする", value: "perform" },
-        { label: "こどもを むかえる", value: "child" },
+        { label: `だいどうげいをする${gateTag("perform")}`, value: "perform", disabled: !gateOk("perform") },
+        { label: `こどもを むかえる${gateTag("child")}`, value: "child", disabled: !gateOk("child") },
         { label: "ちず (M)", value: "map" },
-        { label: "むらを たてる", value: "found" },
+        { label: `むらを たてる${gateTag("found")}`, value: "found", disabled: !gateOk("found") },
         { label: "せかいの きろく", value: "world" },
         { label: "せかいのログ (L)", value: "rawlog" },
         { label: `おと: ${bgmEnabled() ? "ON" : "OFF"}`, value: "sound" },
@@ -1687,6 +1738,7 @@ function fieldMenu(): void {
           ui.push(
             new Info(snapshot?.me.heroName ?? "たびびと", hero
               ? [
+                  `しんらいレベル: Lv${heroProgress?.level ?? 1} (けいけん ${heroProgress?.xp ?? 0})`,
                   `しょうごう: ${title}`,
                   `エージェント: ${hero.id}`,
                   `しょじきん: ${hero.balances.currency}G  くれじっと: ${hero.balances.credit}`,
@@ -3161,12 +3213,29 @@ function render(): void {
     }
   }
 
+  xpFloats = xpFloats.filter((f) => performance.now() < f.until);
+  for (const f of xpFloats) {
+    const age = 1 - (f.until - performance.now()) / 1800;
+    ctx.font = '13px "DotGothic16", monospace';
+    ctx.fillStyle = `rgba(165, 255, 138, ${(1 - age).toFixed(2)})`;
+    ctx.fillText(f.text, f.x - camX + 6, f.y - camY - age * 34);
+  }
+
   if (layerZ !== 0) renderLayer(camX, camY, w, h);
 
   // HUD
   const hero = heroAgent();
   drawWindow(ctx, 12, 40, 264, hero ? 164 : 66);
   drawText(ctx, snapshot.me.heroName ?? "ななしの たびびと", 32, 56, "#ffd75e");
+  if (heroProgress) {
+    ctx.font = '14px "DotGothic16", monospace';
+    ctx.fillStyle = "#8fd0ff";
+    ctx.fillText(`Lv${heroProgress.level}`, 200, 58);
+    ctx.fillStyle = "#22304a";
+    ctx.fillRect(32, 76, 220, 6);
+    ctx.fillStyle = "#4a9fe8";
+    ctx.fillRect(32, 76, Math.round((heroProgress.xpInto / heroProgress.xpNeed) * 220), 6);
+  }
   if (hero) {
     ctx.font = '15px "DotGothic16", monospace';
     ctx.fillStyle = "#8fd0ff";
@@ -3306,6 +3375,7 @@ async function poll(): Promise<void> {
       await refreshWorld(false);
       checkQuests(true);
       celebrate();
+      refreshProgress(true);
     }
   } catch {
     // The node blinked; the next poll retries. Movement should not stutter for it.
