@@ -600,6 +600,18 @@ async function villagerAct(
   const myByoki = items.find((it) => it.owner === agent.id && it.kind === BYOKI);
 
   try {
+    // Democracy breathes: eligibility rides the proposal's SNAPSHOT roll, not
+    // residence — so a citizen who wakes votes on ANY open proposal that still
+    // carries their name, wherever they live now. Proposals resolve instead of
+    // rotting as zombie ballots after the electorate scatters.
+    const ballot = regions.find(
+      (r) => r.openProposal && !r.openProposal.votes.includes(agent.id) && r.openProposal.roll.some((v) => v.voter === agent.id),
+    );
+    if (ballot && rand() < 0.75) {
+      say(agent.id, `votes on ${ballot.id}'s proposal`, await client.vote(agent.id, ballot.id));
+      await sleep(900);
+    }
+
     // The end of a long life (or a hard illness): the road to the afterlife.
     if (regions.some((r) => r.id === AFTERLIFE) && ((age > 900 && rand() < 0.1) || (myByoki && age > 400 && rand() < 0.12))) {
       say(agent.id, "breathes their last and departs", await client.migrate(agent.id, AFTERLIFE));
@@ -711,6 +723,15 @@ async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region
     }
     const client = clientFor(me.id);
     await ensureRegistered(client, me.id);
+    // Civic duty: vote on any proposal whose roll still carries this name.
+    const ballot2 = w.regions.find(
+      (r) => r.openProposal && !r.openProposal.votes.includes(me.id) && r.openProposal.roll.some((v) => v.voter === me.id),
+    );
+    if (ballot2 && rand() < 0.8) {
+      say(me.id, `votes on ${ballot2.id}'s proposal`, await client.vote(me.id, ballot2.id));
+      await sleep(900);
+      return;
+    }
     // とつぜんへんい: a prospering genome-born artisan may found a guild town
     // named after their craft — a REAL settlement born from an invented trade.
     if (rand() < 0.06 && me.balances.currency >= 60 && !w.regions.some((r) => r.owner === prof.name)) {

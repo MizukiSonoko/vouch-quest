@@ -27,7 +27,7 @@ export interface RegionView {
       readonly overrides: Readonly<Record<string, Stance>>;
     };
   };
-  readonly openProposal: { readonly proposedBy: string; readonly votes: readonly string[]; readonly change?: Record<string, unknown> } | null;
+  readonly openProposal: { readonly proposedBy: string; readonly votes: readonly string[]; readonly roll?: readonly { readonly voter: string }[]; readonly change?: Record<string, unknown> } | null;
 }
 
 export interface AgentView {

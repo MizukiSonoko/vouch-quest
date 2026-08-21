@@ -1428,6 +1428,14 @@ function courtMenu(village: Village): void {
             ? [
                 `ぎだい: 【${lawLayer(String((region.openProposal.change as Record<string, unknown> | undefined)?.["policy"] ?? ""))}】${lawText(region.openProposal.change)}`,
                 `ていあんしゃ: ${region.openProposal.proposedBy}`,
+                (() => {
+                  const roll = region.openProposal?.roll ?? [];
+                  const alive = roll.filter((v) => {
+                    const ag = snapshot?.agents.find((a2) => a2.id === v.voter);
+                    return ag && !isDead(ag.region);
+                  }).length;
+                  return `せんきょにん: ${roll.length}めい (ぞんめい ${alive}めい)${alive === 0 ? " — ぎかいは こおりついた…" : ""}`;
+                })(),
                 `とうひょう: ${region.openProposal.votes.length}`,
                 ...region.openProposal.votes.map((v) => `  ${v}`),
               ]
