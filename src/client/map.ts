@@ -311,18 +311,12 @@ function carveVillage(
   globalProtected: Set<number>,
 ): Omit<Village, "regionId" | "displayName"> {
   const rng = villageRng(regionId);
-  // Organic placement: settlements scatter along a golden-angle spiral from
-  // the continent's heart, each nudged by its own name — no two worlds of
-  // regions ever look like a grid.
-  const golden = 2.39996322972865332; // 137.5° in radians
-  const ring = Math.sqrt(slotIndex + 0.6);
-  const theta = slotIndex * golden + rng() * 0.9;
-  const scx = MAP_W / 2 + Math.cos(theta) * ring * 26 * 1.25 + (rng() - 0.5) * 22;
-  const scy = MAP_H / 2 + Math.sin(theta) * ring * 26 * 0.78 + (rng() - 0.5) * 16;
-  const slot: readonly [number, number] = [
-    Math.max(8, Math.min(MAP_W - 48, Math.round(scx) - 21)),
-    Math.max(6, Math.min(MAP_H - 40, Math.round(scy) - 16)),
-  ];
+  // Placement is pure chance, sealed in the region's name: every settlement
+  // rolls its own spot anywhere on the continent. Collisions are welcome —
+  // that is how mergers and enclaves happen.
+  const cx0 = 30 + rng() * (MAP_W - 60);
+  const cy0 = 22 + rng() * (MAP_H - 44);
+  const slot: readonly [number, number] = [Math.round(cx0) - 21, Math.round(cy0) - 16];
   // Territory grows with the settlement: population, development AND wealth
   // push the fence outward — a metropolis sprawls from its slot's centre and
   // may swallow its neighbours whole (併合), who live on as districts (包含).
@@ -1100,7 +1094,24 @@ export function placeNpcs(snapshot: Snapshot, map: WorldMap): { agent: AgentView
       .sort((a, b) => a.id.localeCompare(b.id));
     residents.forEach((agent, i) => {
       const spot = village.spots[i % village.spots.length] ?? [village.x + 2, village.y + 3];
-      placed.push({ agent, x: spot[0], y: spot[1] });
+      // A merger may have built over this doorstep — sidestep to open ground.
+      let [sx, sy] = spot;
+      if (SOLID.has((map.tiles[sy * MAP_W + sx] ?? Tile.Water) as Tile)) {
+        outer: for (let r = 1; r <= 3; r++) {
+          for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+              const t = (map.tiles[(sy + dy) * MAP_W + (sx + dx)] ?? Tile.Water) as Tile;
+              if (!SOLID.has(t)) {
+                sx += dx;
+                sy += dy;
+                break outer;
+              }
+            }
+          }
+        }
+      }
+      if (SOLID.has((map.tiles[sy * MAP_W + sx] ?? Tile.Water) as Tile)) return; // truly walled in — stay indoors
+      placed.push({ agent, x: sx, y: sy });
     });
   }
   return placed;
