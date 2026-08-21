@@ -639,6 +639,7 @@ async function runAct(action: Record<string, unknown>, doing: string): Promise<v
       celebrate();
       refreshProgress(true);
       checkTroubles();
+      checkMilestones();
       xpFloats.push({ text: "+けいけん", x: player.px, y: player.py - 12, until: performance.now() + 1400 });
     } else {
       se("error");
@@ -1964,6 +1965,99 @@ function questJournal(): void {
   ui.push(new Info(`クエストちょう (${doneCount}/${rows.length - 2})`, rows, () => ui.pop()));
 }
 
+/** せかいのきねんび: grand milestones of the whole civilisation, each with the
+ * exact event seq at which it was crossed — folded deterministically from the
+ * log, so every player sees the same anniversaries forever. */
+interface Milestone {
+  readonly label: string;
+  readonly reachedAtSeq: number | null;
+}
+
+function worldMilestones(): Milestone[] {
+  let admitted = 0;
+  let deaths = 0;
+  let vouches = 0;
+  let regionsN = 0;
+  let marriages = 0;
+  const book2 = new WeddingBook();
+  const reached = new Map<string, number>();
+  const mark = (key: string, seq: number): void => {
+    if (!reached.has(key)) reached.set(key, seq);
+  };
+  for (const e of allEvents) {
+    const p = e.payload;
+    if (e.type === "agent.admitted") {
+      admitted++;
+      if (admitted === 500) mark("a500", e.seq);
+      if (admitted === 1000) mark("a1000", e.seq);
+      if (admitted === 2000) mark("a2000", e.seq);
+    } else if (e.type === "agent.migrated") {
+      if (p["toRegion"] === AFTERLIFE) {
+        deaths++;
+        if (deaths === 500) mark("d500", e.seq);
+        if (deaths === 1000) mark("d1000", e.seq);
+      }
+    } else if (e.type === "agent.vouched") {
+      vouches++;
+      if (vouches === 1000) mark("v1000", e.seq);
+      if (vouches === 5000) mark("v5000", e.seq);
+      const from = typeof p["from"] === "string" ? (p["from"] as string) : "";
+      const to = typeof p["to"] === "string" ? (p["to"] as string) : "";
+      if (from && to && book2.vouch(from, to)) {
+        marriages++;
+        if (marriages === 10) mark("m10", e.seq);
+        if (marriages === 50) mark("m50", e.seq);
+      }
+    } else if (e.type === "region.founded") {
+      regionsN++;
+      if (regionsN === 25) mark("r25", e.seq);
+      if (regionsN === 50) mark("r50", e.seq);
+    }
+    if (e.seq === 10000) mark("e10000", e.seq);
+    if (e.seq === 25000) mark("e25000", e.seq);
+    if (e.seq === 50000) mark("e50000", e.seq);
+  }
+  const def: readonly (readonly [string, string])[] = [
+    ["a500", "のべ 500にんめの たみ"],
+    ["a1000", "せんにんの とびら (のべ1000にん)"],
+    ["a2000", "にせんにんの くに"],
+    ["e10000", "できごと 1まん"],
+    ["e25000", "できごと 2まん5せん"],
+    ["e50000", "できごと 5まん"],
+    ["v1000", "しんらいの いと 1000ほん"],
+    ["v5000", "しんらいの いと 5000ほん"],
+    ["m10", "10くみめの ふうふ"],
+    ["m50", "50くみめの ふうふ"],
+    ["d500", "500の たましいが あのよへ"],
+    ["d1000", "1000の たましい"],
+    ["r25", "25ばんめの むら"],
+    ["r50", "50ばんめの むら"],
+  ];
+  return def.map(([key, label]) => ({ label, reachedAtSeq: reached.get(key) ?? null }));
+}
+
+/** Crossing a milestone throws a festival in EVERY village at once. */
+let milestonesSeen: Set<string> | null = null;
+
+function checkMilestones(): void {
+  const now = performance.now();
+  const current = new Set(worldMilestones().filter((m2) => m2.reachedAtSeq !== null).map((m2) => m2.label));
+  if (milestonesSeen === null) {
+    milestonesSeen = current;
+    return;
+  }
+  for (const label of current) {
+    if (milestonesSeen.has(label)) continue;
+    extraExtra(`せかいのきねんび!! 「${label}」たっせい!`);
+    for (const v of map?.villages ?? []) {
+      festivals.set(v.regionId, now + 180_000);
+      if (Math.random() < 0.5) particles.firework(v.x + Math.floor(v.w / 2), v.y + 1);
+    }
+    log.push("せかいじゅうの むらが いっせいに おまつりを はじめた!");
+  }
+  milestonesSeen = current;
+}
+
 function worldRecords(): void {
   const m = snapshot;
   if (!m) return;
@@ -1977,6 +2071,8 @@ function worldRecords(): void {
   ui.push(
     new Info("せかいの きろく", [
       `むら ${m.regions.length} / じゅうみん ${folk.length}にん / どうぐ ${m.items.length}こ / できごと ${m.logLength}`,
+      "～せかいのきねんび～",
+      ...worldMilestones().map((ms) => (ms.reachedAtSeq !== null ? ` ★ ${ms.label} (だい${ms.reachedAtSeq}のできごと)` : ` ・ ${ms.label} — まだ`)),
       "～ちょうじゃばんづけ~",
       ...byGold.map((a, i) => ` ${i + 1}. ${a.id}  ${a.balances.currency}G`),
       "～しんらいばんづけ~",
