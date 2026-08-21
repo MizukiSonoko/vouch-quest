@@ -311,7 +311,18 @@ function carveVillage(
   globalProtected: Set<number>,
 ): Omit<Village, "regionId" | "displayName"> {
   const rng = villageRng(regionId);
-  const slot = SLOTS[slotIndex % SLOTS.length] ?? SLOTS[0]!;
+  // Organic placement: settlements scatter along a golden-angle spiral from
+  // the continent's heart, each nudged by its own name — no two worlds of
+  // regions ever look like a grid.
+  const golden = 2.39996322972865332; // 137.5° in radians
+  const ring = Math.sqrt(slotIndex + 0.6);
+  const theta = slotIndex * golden + rng() * 0.9;
+  const scx = MAP_W / 2 + Math.cos(theta) * ring * 26 * 1.25 + (rng() - 0.5) * 22;
+  const scy = MAP_H / 2 + Math.sin(theta) * ring * 26 * 0.78 + (rng() - 0.5) * 16;
+  const slot: readonly [number, number] = [
+    Math.max(8, Math.min(MAP_W - 48, Math.round(scx) - 21)),
+    Math.max(6, Math.min(MAP_H - 40, Math.round(scy) - 16)),
+  ];
   // Territory grows with the settlement: population, development AND wealth
   // push the fence outward — a metropolis sprawls from its slot's centre and
   // may swallow its neighbours whole (併合), who live on as districts (包含).

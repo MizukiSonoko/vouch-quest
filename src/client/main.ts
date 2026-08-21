@@ -86,7 +86,131 @@ function extraExtra(text: string): void {
   shakeUntil = performance.now() + 700;
   se("fanfare");
 }
-let scene: "title" | "game" | "interior" = "title";
+let scene: "title" | "game" | "interior" | "mine" = "title";
+
+/** こうざん: a dark gallery under a boulder. Veins are mined with real mints;
+ * what each vein holds is unknown until the pick strikes (the slot-machine joy). */
+interface MineShaft {
+  veins: { x: number; y: number; mined: boolean }[];
+  px: number;
+  py: number;
+  minted: number;
+  readonly exit: readonly [number, number];
+}
+let mine: MineShaft | null = null;
+const MINE_W = 11;
+const MINE_H = 8;
+
+function enterMine(seedX: number, seedY: number): void {
+  const era = Math.floor((snapshot?.logLength ?? 0) / 500);
+  let h = (seedX * 73856093) ^ (seedY * 19349663) ^ (era * 83492791);
+  const roll = (): number => {
+    h = (Math.imul(h, 1597334677) + 1234567) | 0;
+    return Math.abs(h) / 2147483647;
+  };
+  const veins: { x: number; y: number; mined: boolean }[] = [];
+  const n = 5 + Math.floor(roll() * 3);
+  for (let tries = 0; veins.length < n && tries < 60; tries++) {
+    const x = 1 + Math.floor(roll() * (MINE_W - 2));
+    const y = 1 + Math.floor(roll() * (MINE_H - 2));
+    if (x === Math.floor(MINE_W / 2) && y >= MINE_H - 3) continue; // keep the exit lane open
+    if (veins.some((v) => v.x === x && v.y === y)) continue;
+    veins.push({ x, y, mined: false });
+  }
+  mine = { veins, px: Math.floor(MINE_W / 2), py: MINE_H - 2, minted: 0, exit: [Math.floor(MINE_W / 2), MINE_H - 1] as const };
+  scene = "mine";
+  se("confirm");
+  log.push("くらい こうどうに もぐりこんだ… ひかる かべを ほってみよう。");
+}
+
+function mineVein(v: { x: number; y: number; mined: boolean }): void {
+  if (!mine) return;
+  if (mine.minted >= 3) {
+    log.push("きょうは もう じゅうぶん ほった。つるはしが おれそうだ。");
+    return;
+  }
+  v.mined = true;
+  const r = Math.random();
+  const kind = r < 0.06 ? null : r < 0.5 ? "ishi" : r < 0.78 ? "mokuzai" : r < 0.92 ? "tekko" : r < 0.985 ? "kin" : "takara";
+  if (!kind) {
+    se("cancel");
+    log.push("はずれ… ただの くずいしだった。");
+    return;
+  }
+  mine.minted++;
+  const label = kind === "kin" ? "きんの かたまり!!" : kind === "tekko" ? "てっこうだ!" : kind === "takara" ? "うもれた たからだ!!!" : kindName(kind);
+  void runAct({ kind: "forage", itemKind: kind }, "つるはしを ふるう").then(() => {
+    if (kind === "kin" || kind === "takara") extraExtra(`こうざんで ${label}`);
+    else log.push(`${label} を ほりだした。`);
+  });
+}
+
+function renderMine(): void {
+  if (!ctx || !mine) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.textBaseline = "top";
+  ctx.fillStyle = "#050308";
+  ctx.fillRect(0, 0, w, h);
+  const ox = (w - MINE_W * CELL) / 2;
+  const oy = (h - MINE_H * CELL) / 2 - 20;
+  for (let y = 0; y < MINE_H; y++) {
+    for (let x = 0; x < MINE_W; x++) {
+      const border = x === 0 || y === 0 || x === MINE_W - 1 || y === MINE_H - 1;
+      const isExit = x === mine.exit[0] && y === mine.exit[1];
+      if (border && !isExit) {
+        const rock = sprites.tiles.get(Tile.Rock);
+        ctx.fillStyle = "#141018";
+        ctx.fillRect(ox + x * CELL, oy + y * CELL, CELL, CELL);
+        if (rock) {
+          ctx.globalAlpha = 0.7;
+          ctx.drawImage(rock, ox + x * CELL, oy + y * CELL);
+          ctx.globalAlpha = 1;
+        }
+      } else {
+        ctx.fillStyle = (x + y) % 2 === 0 ? "#1a1420" : "#171220";
+        ctx.fillRect(ox + x * CELL, oy + y * CELL, CELL, CELL);
+      }
+      if (isExit) {
+        ctx.fillStyle = "#2a2436";
+        ctx.fillRect(ox + x * CELL + 10, oy + y * CELL + 4, CELL - 20, CELL - 8);
+        ctx.fillStyle = "#8fd0ff";
+        ctx.fillText("でぐち", ox + x * CELL + 6, oy + y * CELL + CELL - 16);
+      }
+    }
+  }
+  for (const v of mine.veins) {
+    const vx = ox + v.x * CELL;
+    const vy = oy + v.y * CELL;
+    if (v.mined) {
+      ctx.fillStyle = "#0e0a14";
+      ctx.fillRect(vx + 6, vy + 6, CELL - 12, CELL - 12);
+      continue;
+    }
+    const rock = sprites.tiles.get(Tile.Rock);
+    if (rock) ctx.drawImage(rock, vx, vy);
+    const tw = performance.now() / 300 + v.x * 3 + v.y;
+    ctx.fillStyle = `rgba(255, 226, 122, ${(0.35 + Math.sin(tw) * 0.3).toFixed(2)})`;
+    ctx.fillRect(vx + 12 + Math.floor(Math.sin(tw * 1.7) * 6), vy + 10, 4, 4);
+    ctx.fillRect(vx + 28, vy + 26 + Math.floor(Math.cos(tw) * 4), 3, 3);
+  }
+  const heroPair3 = sprites.heroFor(titleTier(title));
+  ctx.drawImage(heroPair3[0], ox + mine.px * CELL, oy + mine.py * CELL);
+  // lantern gloom
+  const gx3 = ox + mine.px * CELL + CELL / 2;
+  const gy3 = oy + mine.py * CELL + CELL / 2;
+  const grad3 = ctx.createRadialGradient(gx3, gy3, 20, gx3, gy3, 220);
+  grad3.addColorStop(0, "rgba(0,0,0,0)");
+  grad3.addColorStop(1, "rgba(0,0,0,0.82)");
+  ctx.fillStyle = grad3;
+  ctx.fillRect(0, 0, w, h);
+  ctx.font = '15px "DotGothic16", monospace';
+  ctx.fillStyle = "#7a879c";
+  ctx.fillText(`つるはし のこり ${Math.max(0, 3 - mine.minted)}かい / ひかる かべに むかって Enter / でぐちか Esc で そとへ`, ox - 40, oy + MINE_H * CELL + 14);
+  log.render(ctx, w, h);
+  ui.render(ctx, w, h);
+}
+
 interface InteriorRoom {
   readonly village: Village;
   readonly occupant: AgentView | null;
@@ -514,6 +638,7 @@ async function runAct(action: Record<string, unknown>, doing: string): Promise<v
       checkQuests(true);
       celebrate();
       refreshProgress(true);
+      checkTroubles();
       xpFloats.push({ text: "+けいけん", x: player.px, y: player.py - 12, until: performance.now() + 1400 });
     } else {
       se("error");
@@ -606,6 +731,21 @@ function gateOk(gateKey: string): boolean {
 function gateTag(gateKey: string): string {
   const need = GATE[gateKey] ?? 1;
   return (heroProgress?.level ?? 1) >= need ? "" : ` (Lv${need}で かいきん)`;
+}
+
+const prevTroubles = new Map<string, number>();
+
+function checkTroubles(): void {
+  for (const v of map?.villages ?? []) {
+    const n = cityProblems(v).length;
+    const prev = prevTroubles.get(v.regionId);
+    if (prev !== undefined && n < prev) {
+      se("fanfare");
+      log.push(`${v.displayName}の なやみが ひとつ かいけつした! まちの ひとが よろこんでいる。`);
+      particles.firework(v.x + Math.floor(v.w / 2), v.y + 2);
+    }
+    prevTroubles.set(v.regionId, n);
+  }
 }
 
 function refreshProgress(announce: boolean): void {
@@ -948,6 +1088,39 @@ function regimePicker(regionId: string, mode: "amend" | "propose"): void {
  * road led to the afterlife. Every count is folded from real events. */
 /** まちのグラフ: population inflow and treasury over time, folded from the log
  * into unicode spark-bars — SimCity's dashboard in DQ clothing. */
+/** 都市の悩み: SimCity-style problems, each derived live from the world. */
+function cityProblems(v: Village): { icon: string; label: string; hint: string }[] {
+  if (!snapshot) return [];
+  const out: { icon: string; label: string; hint: string }[] = [];
+  const pop = snapshot.agents.filter((a2) => a2.region === v.regionId && a2.role !== "treasury").length;
+  const treasury = snapshot.agents.find((a2) => a2.id === `treasury@${v.regionId}`)?.balances.currency ?? 0;
+  if (v.tier >= 1 && !v.powered) out.push({ icon: "⚡", label: "ていでん", hint: "はつでんしょの ある まちの ちかくか、きふで はってんを" });
+  const sick = snapshot.items.filter((i) => i.kind === BYOKI && snapshot?.agents.find((a2) => a2.id === i.owner)?.region === v.regionId).length;
+  if (sick >= 2) out.push({ icon: "✚", label: "はやりやまい", hint: "やくそうの おみまいか びょういんを" });
+  const junk = snapshot.items.filter((i) => JUNK_KINDS.has(i.kind.replace(/\d+$/, "")) && snapshot?.agents.find((a2) => a2.id === i.owner)?.region === v.regionId).length;
+  if (junk >= 3) out.push({ icon: "👁", label: "ちあんの あっか", hint: "とりしまりの おきてを ていあんしよう" });
+  if (v.tier >= 1 && treasury === 0) out.push({ icon: "¥", label: "ざいせいなん", hint: "きんこへの きふで たてなおしを" });
+  const homes = v.homes.length + snapshot.items.filter((i2) => /^bld(house|cottage|manor|lodge|inn|rowhouse|villa)/.test(i2.kind) && !i2.owner.startsWith("treasury@") && (i2.owner.split("@")[1] ?? "") === v.regionId).length;
+  if (pop > homes * 2 + 2) out.push({ icon: "🏠", label: "じゅうたくぶそく", hint: "いえを たてれば ひとが おちつく" });
+  return out;
+}
+
+/** RCI: what this town wants next, SimCity's three bars. */
+function rciLines(v: Village): string[] {
+  if (!snapshot) return [];
+  const pop = snapshot.agents.filter((a2) => a2.region === v.regionId && a2.role !== "treasury").length;
+  const deeds = snapshot.items.filter((i2) => i2.kind.startsWith("bld") && !i2.owner.startsWith("treasury@") && (i2.owner.split("@")[1] ?? "") === v.regionId);
+  const homes = v.homes.length + deeds.filter((i2) => /^bld(house|cottage|manor|lodge|inn|rowhouse|villa|tower)/.test(i2.kind)).length;
+  const shops = 1 + deeds.filter((i2) => /^bld(shop|market|neon|vision|greenhouse)/.test(i2.kind)).length;
+  const civic = deeds.filter((i2) => /^bld(well|lamp|plaza|fountain|board|garden|meadow|beacon)/.test(i2.kind)).length + (v.hospital ? 1 : 0);
+  const gauge = (need: number): string => "▮".repeat(Math.max(0, Math.min(5, Math.round(need)))).padEnd(5, "▯");
+  return [
+    `じゅうたく需要 ${gauge((pop - homes * 2) / 2)}  (いえ ${homes}けん / ${pop}にん)`,
+    `しょうぎょう需要 ${gauge((pop - shops * 5) / 3)}  (みせ ${shops}けん)`,
+    `こうきょう需要 ${gauge((pop - civic * 4) / 3)}  (せつび ${civic}こ)`,
+  ];
+}
+
 function cityGraph(regionId: string): string[] {
   const BUCKETS = 24;
   const logLen = snapshot?.logLength ?? allEvents.length;
@@ -993,6 +1166,9 @@ function cityGraph(regionId: string): string[] {
     "",
     `きんこの るいせきしゅうし (いま ${nowBank}G)`,
     `ざいせい   ${spark(bank)}`,
+    "",
+    "― この まちの 需要 (SimCity RCI) ―",
+    ...rciLines(map?.villages.find((v2) => v2.regionId === regionId) ?? ({ regionId, homes: [], hospital: null } as unknown as Village)),
     "",
     "めもりは せかいの はじまりから いままでを 24とうぶん。",
     "いえを たて、きふを すれば — せんは のびる。",
@@ -1486,6 +1662,7 @@ const VERBS: readonly string[] = [
   "ちずを みる", "でんぱとうに のぼる", "おおがたビジョンを みる", "いれいひに もうでる", "おまつりを おこす",
   "しゃしんをとる (P)", "ぼうえんきょうで のぞく (T)", "にっきを かく (N)", "にっきを よみかえす",
   "おじぎする (1)", "ばんざいする (2)", "ハートを おくる (3)", "はなびを あげる", "がっきを かなでる", "ごはんを たべる",
+  "きを きる", "いしを ほる", "こうどうに もぐる", "こうせきを ほりあてる", "たてものを かいたいする", "まちのなやみを かいけつする", "RCI需要を よむ",
 ];
 
 /** 機能: the SYSTEMS that run this world, named and counted. */
@@ -1585,6 +1762,11 @@ function requestBoard(): string[] {
       lines.unshift(`${g.done ? "☆" : "・"} ${g.label} (${g.have}/${g.need})${g.done ? " たっせい!" : ""}`);
     }
     lines.unshift("― じだいの めあて (たっせいで +15けいけん) ―");
+  }
+  for (const v of map?.villages ?? []) {
+    for (const tr of cityProblems(v)) {
+      lines.push(`◆ ${v.displayName}が ${tr.label}! — ${tr.hint}`);
+    }
   }
   const spot = treasureSpot();
   if (spot && !myItems().some((i) => i.kind === "takara")) {
@@ -2087,8 +2269,14 @@ function interact(): void {
     ui.push(
       new Menu("ごつごつした いわだ。", [
         { label: "いしを ほる", value: "mine" },
+        { label: "こうどうに もぐる (つるはし 3かい)", value: "descend" },
         { label: "やめる", value: "cancel" },
       ], (v) => {
+        if (v === "descend") {
+          ui.clear();
+          enterMine(fx, fy);
+          return;
+        }
         if (v === "mine") {
           void runAct({ kind: "forage", itemKind: "ishi" }, "いしきり").then(() => {
             particles.sparkle(fx * CELL + CELL / 2, fy * CELL + CELL / 2, "#9298a2");
@@ -2480,6 +2668,48 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "ArrowUp" || e.key === "ArrowDown") se("cursor");
     else if (e.key === "Enter" || e.key === " " || e.key === "z") se("confirm");
     else if (e.key === "Escape" || e.key === "x") se("cancel");
+    ui.handleKey(e.key);
+    return;
+  }
+  if (scene === "mine" && mine) {
+    if (!ui.active) {
+      const dir = DIRS[e.key];
+      if (dir) {
+        const nx = mine.px + dir[0];
+        const ny = mine.py + dir[1];
+        if (nx === mine.exit[0] && ny === mine.exit[1]) {
+          scene = "game";
+          mine = null;
+          se("cancel");
+          return;
+        }
+        const wall = nx <= 0 || ny <= 0 || nx >= MINE_W - 1 || ny >= MINE_H - 1;
+        const vein = mine.veins.find((v) => v.x === nx && v.y === ny && !v.mined);
+        if (!wall && !vein) {
+          mine.px = nx;
+          mine.py = ny;
+        } else if (vein) {
+          mineVein(vein);
+        }
+        return;
+      }
+      if (e.key === "Escape" || e.key === "x") {
+        scene = "game";
+        mine = null;
+        se("cancel");
+        return;
+      }
+      if (e.key === "Enter" || e.key === " " || e.key === "z") {
+        for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
+          const vein = mine.veins.find((v) => v.x === mine!.px + dx && v.y === mine!.py + dy && !v.mined);
+          if (vein) {
+            mineVein(vein);
+            return;
+          }
+        }
+      }
+      return;
+    }
     ui.handleKey(e.key);
     return;
   }
@@ -3038,6 +3268,19 @@ function render(): void {
   }
 
   for (const village of map.villages) {
+    const troubles = cityProblems(village);
+    troubles.forEach((tr, ti) => {
+      const chipX = village.x * CELL - camX + 8 + ti * 84;
+      const chipY = (village.y - 2) * CELL - camY + 18;
+      const blink = Math.floor(performance.now() / 600) % 2 === 0;
+      if (blink) {
+        ctx.fillStyle = "rgba(180, 30, 30, 0.85)";
+        ctx.fillRect(chipX, chipY, 80, 20);
+        ctx.font = '13px "DotGothic16", monospace';
+        ctx.fillStyle = "#fff";
+        ctx.fillText(`${tr.icon}${tr.label}`, chipX + 4, chipY + 3);
+      }
+    });
     const hostV = village.parent ? map.villages.find((o) => o.regionId === village.parent) : null;
     drawText(
       ctx,
@@ -3650,6 +3893,10 @@ function renderInterior(): void {
 
 let last = performance.now();
 function frame(now: number): void {
+  if (scene === "mine") {
+    renderMine();
+    return;
+  }
   if (scene === "interior") {
     renderInterior();
     last = now;
