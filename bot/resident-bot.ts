@@ -183,6 +183,27 @@ function vouchEdges(events: readonly LogEvent[]): Set<string> {
 const isMarried = (edges: Set<string>, id: string, others: readonly Agent[]): boolean =>
   others.some((o) => edges.has(`${id}>${o.id}`) && edges.has(`${o.id}>${id}`));
 
+// --- urbanization: the pull of the bright lights --------------------------------
+// Migrants overwhelmingly head for the biggest, richest towns; that is how a
+// metropolis forms and stays formed. Weight = (residents + treasury/10 + 1)^2.
+
+function pickDestination(agents: readonly Agent[], regions: readonly Region[], fromRegion: string): Region | null {
+  const options = regions.filter((r) => r.lifecycle === "active" && r.id !== fromRegion && r.id !== AFTERLIFE);
+  if (options.length === 0) return null;
+  const weights = options.map((r) => {
+    const pop = agents.filter((x) => x.region === r.id && x.role !== "treasury").length;
+    const bank = agents.find((x) => x.id === `treasury@${r.id}`)?.balances.currency ?? 0;
+    return (pop + bank / 10 + 1) ** 2;
+  });
+  const total = weights.reduce((acc, x) => acc + x, 0);
+  let roll = rand() * total;
+  for (let i = 0; i < options.length; i++) {
+    roll -= weights[i] ?? 0;
+    if (roll <= 0) return options[i] ?? null;
+  }
+  return options[options.length - 1] ?? null;
+}
+
 // --- shared bootstrap: found a town, or get hired into a bot-owned one ----------
 
 async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promise<void> {
@@ -614,9 +635,13 @@ async function villagerAct(
       const to = neighbors[Math.floor(rand() * neighbors.length)];
       if (to) say(agent.id, `chats up ${to.id}`, await client.vouch(agent.id, to.id, 1));
     } else if (roll < 0.78) {
-      const target = regions.filter((r) => r.lifecycle === "active" && r.id !== agent.region && r.id !== AFTERLIFE);
-      const t2 = target[Math.floor(rand() * target.length)];
-      if (t2) say(agent.id, `moves to ${t2.id}`, await client.migrate(agent.id, t2.id));
+      // The city keeps its people: the busier home is, the fewer leave. Those
+      // who do go follow the bright lights (population- and wealth-weighted).
+      const homePop = agents.filter((x) => x.region === agent.region && x.role !== "treasury").length;
+      if (rand() >= Math.min(0.85, homePop / 16)) {
+        const t2 = pickDestination(agents, regions, agent.region);
+        if (t2) say(agent.id, `moves to ${t2.id}`, await client.migrate(agent.id, t2.id));
+      }
     }
   } catch (error) {
     say(agent.id, "stumbled:", error instanceof Error ? error.message : String(error));
