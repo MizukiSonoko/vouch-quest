@@ -922,6 +922,7 @@ export function buildMap(snapshot: Snapshot): WorldMap {
   for (const item of snapshot.items) {
     const parsed = /^bld([a-z]+)(\d+)x(\d+)$/.exec(item.kind);
     if (!parsed) continue;
+    if (item.owner.startsWith("treasury@")) continue; // かいたい済み — the deed was surrendered
     const def = getBuildings()[parsed[1] ?? ""];
     if (!def) continue;
     const bx = Number(parsed[2]);

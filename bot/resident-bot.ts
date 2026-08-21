@@ -187,13 +187,22 @@ const isMarried = (edges: Set<string>, id: string, others: readonly Agent[]): bo
 // Migrants overwhelmingly head for the biggest, richest towns; that is how a
 // metropolis forms and stays formed. Weight = (residents + treasury/10 + 1)^2.
 
-function pickDestination(agents: readonly Agent[], regions: readonly Region[], fromRegion: string): Region | null {
+function pickDestination(agents: readonly Agent[], regions: readonly Region[], fromRegion: string, items: readonly Item[] = []): Region | null {
   const options = regions.filter((r) => r.lifecycle === "active" && r.id !== fromRegion && r.id !== AFTERLIFE);
   if (options.length === 0) return null;
+  // SimCity feedback: standing homes and decor built by residents make a town
+  // ATTRACTIVE — construction genuinely pulls immigration.
+  const charm = new Map<string, number>();
+  for (const it of items) {
+    if (!it.kind.startsWith("bld") || it.owner.startsWith("treasury@")) continue;
+    const rid = it.owner.split("@")[1] ?? "";
+    const isHome = /^bld(house|cottage|manor|lodge|inn|rowhouse|villa|tower)/.test(it.kind);
+    charm.set(rid, (charm.get(rid) ?? 0) + (isHome ? 3 : 1));
+  }
   const weights = options.map((r) => {
     const pop = agents.filter((x) => x.region === r.id && x.role !== "treasury").length;
     const bank = agents.find((x) => x.id === `treasury@${r.id}`)?.balances.currency ?? 0;
-    return (pop + bank / 10 + 1) ** 2;
+    return (pop + bank / 10 + (charm.get(r.id) ?? 0) + 1) ** 2;
   });
   const total = weights.reduce((acc, x) => acc + x, 0);
   let roll = rand() * total;
@@ -639,7 +648,7 @@ async function villagerAct(
       // who do go follow the bright lights (population- and wealth-weighted).
       const homePop = agents.filter((x) => x.region === agent.region && x.role !== "treasury").length;
       if (rand() >= Math.min(0.85, homePop / 16)) {
-        const t2 = pickDestination(agents, regions, agent.region);
+        const t2 = pickDestination(agents, regions, agent.region, items);
         if (t2) say(agent.id, `moves to ${t2.id}`, await client.migrate(agent.id, t2.id));
       }
     }

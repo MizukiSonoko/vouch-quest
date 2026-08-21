@@ -671,6 +671,20 @@ function useItem(item: ItemView): void {
         } else ui.clear();
       }, () => ui.clear()),
     );
+  } else if (item.kind.startsWith("bld")) {
+    const home = snapshot?.me.agentId?.split("@")[1] ?? "";
+    ui.push(
+      new Menu(`${kindName(item.kind)} — どうする?`, [
+        { label: "かいたいする (たてものが きえる)", value: "demolish" },
+        { label: "やめる", value: "cancel" },
+      ], (v) => {
+        if (v === "demolish" && home) {
+          void runAct({ kind: "transferItem", itemId: item.id, to: `treasury@${home}` }, "かいたい").then(() => {
+            log.push("けんりしょを へんのうした。たてものは しずかに すがたを けした。");
+          });
+        } else ui.clear();
+      }, () => ui.clear()),
+    );
   } else if (item.kind === "herb") {
     ui.push(new Info("やくそう", ["いま つかうほど つかれていない。", "びょうきの ひとに 「おみまい」で とどけると よろこばれる。"], () => ui.clear()));
   } else {
@@ -932,6 +946,59 @@ function regimePicker(regionId: string, mode: "amend" | "propose"): void {
 /** むらの きろく と いれいひ: the village's history and its dead, from the log.
  * The dead are those whose agent id was born here (name@region) and whose last
  * road led to the afterlife. Every count is folded from real events. */
+/** まちのグラフ: population inflow and treasury over time, folded from the log
+ * into unicode spark-bars — SimCity's dashboard in DQ clothing. */
+function cityGraph(regionId: string): string[] {
+  const BUCKETS = 24;
+  const logLen = snapshot?.logLength ?? allEvents.length;
+  const span = Math.max(1, Math.ceil(logLen / BUCKETS));
+  const pop: number[] = Array.from({ length: BUCKETS }, () => 0);
+  const bank: number[] = Array.from({ length: BUCKETS }, () => 0);
+  let curPop = 0;
+  let curBank = 0;
+  let bi = 0;
+  for (const e of allEvents) {
+    while (e.seq >= (bi + 1) * span && bi < BUCKETS - 1) {
+      pop[bi] = curPop;
+      bank[bi] = curBank;
+      bi++;
+    }
+    const p = e.payload;
+    if (e.type === "agent.admitted") {
+      const adm = p["admission"] as Record<string, unknown> | undefined;
+      if (adm?.["region"] === regionId) curPop++;
+    } else if (e.type === "agent.migrated") {
+      if (p["toRegion"] === regionId) curPop++;
+    } else if (e.type === "economy.settled") {
+      const entries = (p["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+      for (const en of entries) {
+        if (en.agentId === `treasury@${regionId}`) curBank += en.currencyDelta ?? 0;
+      }
+    }
+  }
+  for (; bi < BUCKETS; bi++) {
+    pop[bi] = curPop;
+    bank[bi] = curBank;
+  }
+  const BARS = "▁▂▃▄▅▆▇█";
+  const spark = (xs: number[]): string => {
+    const max = Math.max(1, ...xs);
+    return xs.map((v) => BARS[Math.min(7, Math.floor((Math.max(0, v) / max) * 7.99))] ?? "▁").join("");
+  };
+  const nowPop = snapshot?.agents.filter((a2) => a2.region === regionId && a2.role !== "treasury").length ?? 0;
+  const nowBank = snapshot?.agents.find((a2) => a2.id === `treasury@${regionId}`)?.balances.currency ?? 0;
+  return [
+    `にゅうじゅうしゃ るいけい ${pop[BUCKETS - 1]}にん (いま すんでいるのは ${nowPop}にん)`,
+    `りゅうにゅう ${spark(pop)}`,
+    "",
+    `きんこの るいせきしゅうし (いま ${nowBank}G)`,
+    `ざいせい   ${spark(bank)}`,
+    "",
+    "めもりは せかいの はじまりから いままでを 24とうぶん。",
+    "いえを たて、きふを すれば — せんは のびる。",
+  ];
+}
+
 function memorialLines(regionId: string, displayName: string): string[] {
   const dead: { id: string; seq: number }[] = [];
   const trades = new Map<string, number>();
@@ -992,6 +1059,7 @@ function hallMenu(village: Village): void {
     new Menu(`${region.displayName} やくば`, [
       { label: "むらの じょうほう", value: "info" },
       { label: "むらの きろく (いれいひ)", value: "memorial" },
+      { label: "まちのグラフ (じんこう・ざいせい)", value: "graph" },
       { label: region.salePrice !== null ? `この むらを かいとる (${region.salePrice}G)${gateTag("buyRegion")}` : "かいとる (うりに でていない)", value: "buy", disabled: !gateOk("buyRegion") || region.salePrice === null || ctx.isOwner || !heroAgent() },
       { label: `むらづくりに きふする${gateTag("donate")}`, value: "donate", disabled: !gateOk("donate") || heroAgent()?.region !== region.id },
       { label: `ふどうさん (うる・ゆずる・たたむ)${gateTag("estate")}`, value: "estate", disabled: !gateOk("estate") || !ctx.isOwner },
@@ -1103,6 +1171,8 @@ function hallMenu(village: Village): void {
             ui.clear();
           }, () => ui.clear()),
         );
+      } else if (value === "graph") {
+        ui.push(new Info(`${region.displayName} — まちのグラフ`, cityGraph(region.id), () => ui.pop()));
       } else if (value === "memorial") {
         ui.push(new Info(`${region.displayName} — むらの きろく`, memorialLines(region.id, region.displayName), () => ui.pop()));
       } else if (value === "info") villageInfo(ctx);
@@ -1355,15 +1425,31 @@ function buildMenu(): void {
       const entries = Object.entries(catalog).filter(([, d]) => d.category === cat);
       ui.push(
         new Menu(`${cat} — めのまえ (${fx},${fy})`, [
-          ...entries.map(([k, d]) => ({ label: `${d.label} — ${d.fee}G`, value: k, disabled: gold < d.fee })),
+          ...entries.map(([k, d]) => {
+          const mats = d.materials ?? {};
+          const matLabel = Object.entries(mats).map(([mk, n]) => `${kindName(mk)}x${n}`).join(" ");
+          const items = myItems();
+          const hasMats = Object.entries(mats).every(([mk, n]) => items.filter((it) => it.kind === mk).length >= n);
+          return { label: `${d.label} — ${d.fee}G${matLabel ? ` + ${matLabel}` : ""}`, value: k, disabled: gold < d.fee || !hasMats };
+        }),
           { label: "もどる", value: "cancel" },
         ], (k) => {
           if (k === "cancel") return ui.pop();
           const def = catalog[k];
           if (!def) return ui.clear();
-          void runAct({ kind: "build", structure: k, x: fx, y: fy, fee: def.fee }, `${def.label}を たてる`).then(() => {
+          void (async () => {
+            // Consume the materials first: each is honestly surrendered to the
+            // treasury (the same one-way door that eating uses).
+            const home = snapshot?.me.agentId?.split("@")[1] ?? "";
+            for (const [mk, n] of Object.entries(def.materials ?? {})) {
+              const held = myItems().filter((it) => it.kind === mk).slice(0, n);
+              for (const it of held) {
+                await postAct({ kind: "transferItem", itemId: it.id, to: `treasury@${home}` });
+              }
+            }
+            await runAct({ kind: "build", structure: k, x: fx, y: fy, fee: def.fee }, `${def.label}を たてる`);
             extraExtra("けんちく かんりょう! せかいの ちずに きざまれた!");
-          });
+          })();
         }, () => ui.pop()),
       );
     }, () => ui.clear()),
@@ -1980,6 +2066,38 @@ function interact(): void {
       );
       return;
     }
+  }
+  if (tile === Tile.Tree || tile === Tile.SnowTree) {
+    ui.push(
+      new Menu("おおきな きだ。", [
+        { label: "きを きる (もくざいを える)", value: "chop" },
+        { label: "やめる", value: "cancel" },
+      ], (v) => {
+        if (v === "chop") {
+          void runAct({ kind: "forage", itemKind: "mokuzai" }, "きこり").then(() => {
+            particles.sparkle(fx * CELL + CELL / 2, fy * CELL + CELL / 2, "#b07a3c");
+            log.push("もくざいを てにいれた! (けんちくの ざいりょうに なる)");
+          });
+        } else ui.clear();
+      }, () => ui.clear()),
+    );
+    return;
+  }
+  if (tile === Tile.Rock) {
+    ui.push(
+      new Menu("ごつごつした いわだ。", [
+        { label: "いしを ほる", value: "mine" },
+        { label: "やめる", value: "cancel" },
+      ], (v) => {
+        if (v === "mine") {
+          void runAct({ kind: "forage", itemKind: "ishi" }, "いしきり").then(() => {
+            particles.sparkle(fx * CELL + CELL / 2, fy * CELL + CELL / 2, "#9298a2");
+            log.push("いしを きりだした! (いしだたみや ビルの ざいりょうだ)");
+          });
+        } else ui.clear();
+      }, () => ui.clear()),
+    );
+    return;
   }
   if (tile === Tile.Sign) {
     const village = map.villages.find((v) => v.sign[0] === fx && v.sign[1] === fy);

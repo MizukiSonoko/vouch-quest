@@ -14,6 +14,8 @@ export interface BuildingDef {
   readonly category: "すまい" | "みせ・しごと" | "しぜん" | "こうきょう" | "かざり";
   /** Footprint: tile offsets from the anchor (dx, dy, tile). */
   readonly cells: readonly (readonly [number, number, Tile])[];
+  /** Materials consumed on construction (kind -> count), Minecraft-style. */
+  readonly materials?: Readonly<Record<string, number>>;
 }
 
 const box = (w: number, h: number, tile: Tile): (readonly [number, number, Tile])[] => {
@@ -142,12 +144,31 @@ function withLegacy(defs: Record<string, BuildingDef>): Record<string, BuildingD
   return defs;
 }
 
+/** Attach material recipes: wooden things want もくざい, stony things want いし. */
+function withMaterials(defs: Record<string, BuildingDef>): Record<string, BuildingDef> {
+  const wants = (def: BuildingDef): Readonly<Record<string, number>> | undefined => {
+    const tilesUsed = new Set(def.cells.map(([, , t2]) => t2));
+    const woody = tilesUsed.has(Tile.WallWood) || tilesUsed.has(Tile.HouseWall) || tilesUsed.has(Tile.HouseRoof) || tilesUsed.has(Tile.RoofGreen) || tilesUsed.has(Tile.RoofBlue) || tilesUsed.has(Tile.RoofBrown) || tilesUsed.has(Tile.Fence) || tilesUsed.has(Tile.Stall);
+    const stony = tilesUsed.has(Tile.Pavement) || tilesUsed.has(Tile.TowerWall) || tilesUsed.has(Tile.TowerGlass) || tilesUsed.has(Tile.Rock) || tilesUsed.has(Tile.Well) || tilesUsed.has(Tile.Crossing) || tilesUsed.has(Tile.RoadElevated);
+    const size = def.cells.length;
+    const out: Record<string, number> = {};
+    if (woody) out["mokuzai"] = size >= 8 ? 2 : 1;
+    if (stony) out["ishi"] = size >= 8 ? 2 : 1;
+    return Object.keys(out).length > 0 ? out : undefined;
+  };
+  for (const [k, def] of Object.entries(defs)) {
+    const m = wants(def);
+    if (m) defs[k] = { ...def, materials: m };
+  }
+  return defs;
+}
+
 let cache: Record<string, BuildingDef> | null = null;
 
 /** Lazy: buildings reference Tile, and map.ts references this module — the
  * catalog materialises on first use, after both modules have initialised. */
 export function getBuildings(): Readonly<Record<string, BuildingDef>> {
-  cache ??= withLegacy(generate());
+  cache ??= withMaterials(withLegacy(generate()));
   return cache;
 }
 
