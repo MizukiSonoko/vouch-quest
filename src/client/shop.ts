@@ -21,6 +21,8 @@ export const CATALOG: readonly Ware[] = [
   { kind: "sword", name: "どうのつるぎ", price: 45, blurb: "かけだしの あかし。" },
   { kind: "gem", name: "ほうせき", price: 80, blurb: "とりひきの きらめき。" },
   { kind: "crown", name: "おうかん", price: 150, blurb: "そんちょうの けんい。" },
+  { kind: "petslime", name: "ペットスライム", price: 30, blurb: "ぷるぷるが ついてくる。" },
+  { kind: "petusagi", name: "こうさぎ", price: 35, blurb: "ぴょこぴょこと あとを ゆく。" },
 ];
 
 export function wareByKind(kind: string): Ware | null {
@@ -42,6 +44,8 @@ const EXTRA_NAMES: Readonly<Record<string, string>> = {
   kuzutetsu: "くずてつ",
   nisegane: "にせがね",
   garakuta: "ガラクタ",
+  takara: "たから",
+  daidogei: "げいのふだ",
 };
 
 // Vocabulary learned from the genome (see genome.ts) — merged at boot.
@@ -64,11 +68,11 @@ export function allWares(): readonly Ware[] {
   return [...CATALOG, ...EXTRA_WARES];
 }
 
-const BLD_JA: Readonly<Record<string, string>> = { house: "いえ", shop: "みせ", garden: "はなばたけ", tower: "とう", tree: "き" };
+const BLD_JA: Readonly<Record<string, string>> = { house: "いえ", shop: "みせ", garden: "はなばたけ", tower: "とう", tree: "き", field: "はたけ" };
 
 /** Parse a construction-deed kind (`bld<type><x>x<y>`), if it is one. */
 export function parseBuilding(kind: string): { type: string; name: string; x: number; y: number } | null {
-  const m = /^bld(house|shop|garden|tower|tree)(\d+)x(\d+)$/.exec(kind);
+  const m = /^bld(house|shop|garden|tower|tree|field)(\d+)x(\d+)$/.exec(kind);
   if (!m) return null;
   return { type: m[1] ?? "", name: BLD_JA[m[1] ?? ""] ?? "たてもの", x: Number(m[2]), y: Number(m[3]) };
 }

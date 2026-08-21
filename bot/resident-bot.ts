@@ -742,21 +742,28 @@ async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region
 
 const MIND_PATH = process.env["BOT_MIND_PATH"] ?? `${process.env["HOME"]}/vouch-data/bot-mind.json`;
 
-function loadMind(): { answeredSeq: number } {
+interface Deposit {
+  payer: string;
+  amount: number;
+  dueLen: number;
+}
+
+function loadMind(): { answeredSeq: number; deposits: Deposit[] } {
   try {
-    const m = JSON.parse(readFileSync(MIND_PATH, "utf8")) as { answeredSeq?: number };
-    return { answeredSeq: m.answeredSeq ?? 0 };
+    const m = JSON.parse(readFileSync(MIND_PATH, "utf8")) as { answeredSeq?: number; deposits?: Deposit[] };
+    return { answeredSeq: m.answeredSeq ?? 0, deposits: m.deposits ?? [] };
   } catch {
-    return { answeredSeq: 0 };
+    return { answeredSeq: 0, deposits: [] };
   }
 }
 
-function saveMind(m: { answeredSeq: number }): void {
+function saveMind(m: { answeredSeq: number; deposits: Deposit[] }): void {
   writeFileSync(MIND_PATH, JSON.stringify(m));
 }
 
 const KIND_PRICES: Record<string, number> = {
   herb: 8, torch: 12, tsubo: 15, shield: 30, sword: 45, gem: 80, crown: 150,
+  takara: 25, petslime: 30, petusagi: 35,
   bread: 6, fish: 7, sakana: 7, yasai: 5, lantern: 12, rope: 8, boots: 14, tea: 10, brick: 9, gear: 16,
 };
 
@@ -801,6 +808,29 @@ async function respondToPlayers(w: { agents: Agent[]; regions: Region[]; items: 
             await sleep(900);
           }
         }
+      } else if (e.type === "economy.settled") {
+        // よきん: a player's payment INTO Ginko is a deposit — repaid with 10%
+        // interest a few hundred events later, from the banker's own purse.
+        const entries = (p["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+        const toGinko = entries.find((x) => x.agentId?.startsWith("Ginko@") && (x.currencyDelta ?? 0) >= 3);
+        const payer = entries.find((x) => x.agentId && (x.currencyDelta ?? 0) < 0);
+        if (toGinko && payer?.agentId && isPlayerAgent(payer.agentId)) {
+          mind.deposits.push({ payer: payer.agentId, amount: toGinko.currencyDelta ?? 0, dueLen: w.events.length + 200 });
+          say("Ginko", `books a deposit of ${toGinko.currencyDelta}G from ${payer.agentId}`);
+        }
+      } else if (e.type === "item.minted" && p["kind"] === "daidogei") {
+        // だいどうげい: the audience tips the performer on their next waking.
+        const performer = typeof p["owner"] === "string" ? (p["owner"] as string) : "";
+        if (performer && isPlayerAgent(performer)) {
+          const audience = w.agents.filter((x) => x.region === performer.split("@")[1] && isOurs(x.id) && x.balances.currency >= 2).slice(0, 3);
+          for (const fan of audience) {
+            const c2 = clientFor(fan.id);
+            await ensureRegistered(c2, fan.id);
+            say(fan.id, `tips the street performer ${performer}`, await c2.transfer(fan.id, performer, 1 + Math.floor(rand() * 2)));
+            await sleep(900);
+            acted++;
+          }
+        }
       } else if (e.type === "item.transferred") {
         const from = typeof p["from"] === "string" ? (p["from"] as string) : "";
         const to = typeof p["to"] === "string" ? (p["to"] as string) : "";
@@ -832,8 +862,32 @@ async function respondToPlayers(w: { agents: Agent[]; regions: Region[]; items: 
       say("mind", "stumbled:", error instanceof Error ? error.message : String(error));
     }
   }
+  // Mature deposits: Ginko honours the passbook with 10% interest.
+  const still: Deposit[] = [];
+  for (const dep of mind.deposits) {
+    if (w.events.length < dep.dueLen) {
+      still.push(dep);
+      continue;
+    }
+    try {
+      const ginko = w.agents.find((x) => x.id.startsWith("Ginko@") && x.region !== AFTERLIFE);
+      const payout = Math.floor(dep.amount * 1.1);
+      if (ginko && ginko.balances.currency >= payout) {
+        const c3 = clientFor(ginko.id);
+        await ensureRegistered(c3, ginko.id);
+        say(ginko.id, `repays ${dep.payer}'s deposit with interest (${payout}G)`, await c3.transfer(ginko.id, dep.payer, payout));
+        await sleep(900);
+      } else {
+        still.push(dep); // the bank is short today; the passbook stands
+      }
+    } catch (error) {
+      say("Ginko", "repayment stumbled:", error instanceof Error ? error.message : String(error));
+      still.push(dep);
+    }
+  }
+  mind.deposits = still;
   const top = w.events[w.events.length - 1];
-  saveMind({ answeredSeq: top ? top.seq : mind.answeredSeq });
+  saveMind({ answeredSeq: top ? top.seq : mind.answeredSeq, deposits: mind.deposits });
 }
 
 // --- the estate escrow: a listed bot village is honestly SOLD -------------------

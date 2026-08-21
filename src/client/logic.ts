@@ -45,10 +45,10 @@ export const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("proposeEconomy"), regionId, baseCostRate: z.number().min(0).max(1) }),
   z.object({
     kind: z.literal("build"),
-    structure: z.enum(["house", "shop", "garden", "tower", "tree"]),
+    structure: z.string().regex(/^[a-z]{2,20}$/),
     x: z.number().int().min(2).max(357),
     y: z.number().int().min(2).max(237),
-    fee: z.number().int().min(0).max(100),
+    fee: z.number().int().min(0).max(200),
   }),
 ]);
 

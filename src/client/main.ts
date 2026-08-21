@@ -10,6 +10,7 @@ import { npcLines, registerChatter } from "./dialogue";
 import { AFTERLIFE, BYOKI, CHILD_NAMES, foldLife, isChildName, isDead, WeddingBook } from "./life";
 import { eventToMessage } from "./feed";
 import { Biome, BIOME_JA, biomeAt, buildMap, heroSpawn, isSolid, MAP_H, MAP_W, placeNpcs, Tile, tileAt, type Village, villageContains, type WorldMap } from "./map";
+import { BUILDING_CATEGORIES, buildingCount, getBuildings } from "./buildings";
 import { loadGenome } from "./genome";
 import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
 import { classifyRegime, type GovernanceValue, lawLayer, lawText, municipalRank, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
@@ -586,6 +587,7 @@ function wantOf(agent: AgentView): Ware | null {
 
 /** たいまつ: a lit torch pushes back the night around the hero for a while. */
 let torchUntil = 0;
+const petTrail = { x: 0, y: 0 };
 
 /** A wedding in progress: the couple and guests gather at the town hall. */
 let wedding: { a: string; b: string; village: Village; until: number } | null = null;
@@ -624,6 +626,7 @@ function npcMenu(mob: Mob): void {
         { label: "ほしいものを きく", value: "want" },
         { label: "おみまいする (やくそう)", value: "care", disabled: !snapshot?.items.some((i) => i.owner === a.id && i.kind === BYOKI) || !myItems().some((i) => i.kind === "herb") },
         { label: "でしいりする (10G)", value: "apprentice", disabled: !genomeProfOf(a.id) },
+        { label: "よきんする (りそく10%)", value: "deposit", disabled: (a.id.split("@")[0] ?? "") !== "Ginko" },
         { label: "どうぐを わたす", value: "item", disabled: items.length === 0 },
         { label: "やめる", value: "cancel" },
       ],
@@ -686,6 +689,21 @@ function npcMenu(mob: Mob): void {
               log.push(`${a.id.split("@")[0]}に やくそうを とどけた。はやく よくなりますように…`);
             });
           }
+        } else if (value === "deposit") {
+          ui.push(
+            new Menu("いくら あずける? (すこし たってから りそく10%つきで もどってくる)", [
+              { label: "5G", value: "5" },
+              { label: "10G", value: "10" },
+              { label: "20G", value: "20" },
+              { label: "やめる", value: "cancel" },
+            ], (v) => {
+              if (v !== "cancel") {
+                void runAct({ kind: "transfer", to: a.id, amount: Number(v) }, "ぎんこうに あずける").then(() => {
+                  log.push("ぎんこういん Ginkoは ちょうめんに きちんと かきこんだ。");
+                });
+              } else ui.clear();
+            }, () => ui.clear()),
+          );
         } else if (value === "apprentice") {
           const prof = genomeProfOf(a.id);
           if (prof) {
@@ -1230,14 +1248,8 @@ const JUNK_KINDS = new Set(["kuzutetsu", "nisegane", "garakuta"]);
 
 /** けいじばん — town notices, including the wanted poster earned by real crimes. */
 /** いらいのふだ: what the world is asking of you RIGHT NOW, derived live. */
-/** けんちく: mint a coordinate-deed item — the map builds it for everyone. */
-const BUILD_COSTS: Readonly<Record<string, { label: string; fee: number }>> = {
-  house: { label: "いえ (2x2)", fee: 15 },
-  shop: { label: "みせ (やたい)", fee: 10 },
-  garden: { label: "はなばたけ (2x2)", fee: 3 },
-  tree: { label: "き (うえる)", fee: 2 },
-  tower: { label: "とう (4かいだて)", fee: 40 },
-};
+/** けんちく: mint a coordinate-deed item — the map builds it for everyone.
+ * The catalog has dozens of structures; pick a shelf, then a thing. */
 const BUILDABLE_TILES: ReadonlySet<Tile> = new Set([Tile.Grass, Tile.Grass2, Tile.Flower, Tile.Sand, Tile.Snow, Tile.Swamp, Tile.Path]);
 
 function buildMenu(): void {
@@ -1259,18 +1271,75 @@ function buildMenu(): void {
     return;
   }
   const gold = me.balances.currency;
+  const catalog = getBuildings();
   ui.push(
-    new Menu(`めのまえ (${fx},${fy})に なにを たてる? (もちがね ${gold}G)`, [
-      ...Object.entries(BUILD_COSTS).map(([k, v]) => ({ label: `${v.label} — ${v.fee}G`, value: k, disabled: gold < v.fee })),
+    new Menu(`なにを たてる? (ぜん${buildingCount()}しゅ / もちがね ${gold}G)`, [
+      ...BUILDING_CATEGORIES.map((c) => ({ label: c, value: c })),
       { label: "やめる", value: "cancel" },
-    ], (k) => {
-      const cost = BUILD_COSTS[k];
-      if (!cost) return ui.clear();
-      void runAct({ kind: "build", structure: k, x: fx, y: fy, fee: cost.fee }, `${cost.label}を たてる`).then(() => {
-        extraExtra("けんちく かんりょう! せかいの ちずに きざまれた!");
-      });
+    ], (cat) => {
+      if (cat === "cancel") return ui.clear();
+      const entries = Object.entries(catalog).filter(([, d]) => d.category === cat);
+      ui.push(
+        new Menu(`${cat} — めのまえ (${fx},${fy})`, [
+          ...entries.map(([k, d]) => ({ label: `${d.label} — ${d.fee}G`, value: k, disabled: gold < d.fee })),
+          { label: "もどる", value: "cancel" },
+        ], (k) => {
+          if (k === "cancel") return ui.pop();
+          const def = catalog[k];
+          if (!def) return ui.clear();
+          void runAct({ kind: "build", structure: k, x: fx, y: fy, fee: def.fee }, `${def.label}を たてる`).then(() => {
+            extraExtra("けんちく かんりょう! せかいの ちずに きざまれた!");
+          });
+        }, () => ui.pop()),
+      );
     }, () => ui.clear()),
   );
+}
+
+/** たからのありか: one spot per era (every 500 events), from the log length. */
+function treasureSpot(): readonly [number, number] | null {
+  if (!snapshot || !map) return null;
+  const era = Math.floor(snapshot.logLength / 500);
+  let hsh = era * 2654435761 % 4294967296;
+  hsh = (hsh ^ (hsh >> 13)) * 1274126177 % 4294967296;
+  const tx = 12 + (Math.abs(hsh) % (MAP_W - 24));
+  const ty = 12 + (Math.abs(hsh >> 8) % (MAP_H - 24));
+  if (isSolid(map, tx, ty) || map.villages.some((v) => villageContains(v, tx, ty))) {
+    return [((tx + 31) % (MAP_W - 24)) + 12, ((ty + 17) % (MAP_H - 24)) + 12] as const;
+  }
+  return [tx, ty] as const;
+}
+
+/** できることずかん: every verb in the world, numbered and counted. */
+const VERBS: readonly string[] = [
+  "あるく", "ダッシュ", "こうかに のぼる", "ちかどうを あるく", "おくじょうに あがる",
+  "はなす", "みのうえを きく", "ゴールドを わたす", "どうぐを わたす", "ほしょうする",
+  "こくはくする", "けっこんする", "こどもを むかえる", "おみまいする", "ほしいものを きく",
+  "しなものを とどけて かせぐ", "でしいりする", "ものづくり", "だいどうげいをする", "よきんする (りそく10%)",
+  "かいものする", "はたけで しゅうかく", "つりを する", "たからを ほる", "どうぐを つかう",
+  "たいまつを ともす", "つぼうらないを する", "ペットを かう", "ペットと さんぽ", "びょういんに かかる",
+  "でんしゃに のる", "ちかてつに のる", "ひこうきに のる", "こうかきゅうこうを ながめる", "むらを たてる",
+  "むらに ひっこす", "いじゅうしゃを まねく", "けんぽうを さだめる", "がいこうを むすぶ", "ぜいせいを かえる",
+  "ちゅうぞうほうを かえる", "おきてを ていあんする", "とうひょうする", "ろっぽうぜんしょを よむ", "むらの きろくを よむ",
+  "むらづくりに きふする", "むらを うりにだす", "むらを かいとる", "むらを ゆずる", "むらを たたむ/ひらく",
+  "けんちくする", "けんりしょを ゆずる", "けいざいしんぶんを よむ", "いらいのふだを みる", "せかいのログを よむ",
+  "ちずを みる", "でんぱとうに のぼる", "おおがたビジョンを みる", "いれいひに もうでる", "おまつりを おこす",
+];
+
+function compendium(): void {
+  const catalog = getBuildings();
+  const wares = allWares();
+  const total = VERBS.length + Object.keys(catalog).length + wares.length + genomeProfs.size;
+  const lines: string[] = [];
+  lines.push(`― こうどう ${VERBS.length}こ ―`);
+  VERBS.forEach((v, i) => lines.push(` ${i + 1}. ${v}`));
+  lines.push("");
+  lines.push(`― たてられる もの ${Object.keys(catalog).length}しゅ ―`);
+  Object.values(catalog).forEach((d, i) => lines.push(` ${VERBS.length + i + 1}. ${d.label} (${d.fee}G)`));
+  lines.push("");
+  lines.push(`― しなもの ${wares.length}しゅ / しんかの しょくぎょう ${genomeProfs.size}しゅ ―`);
+  wares.forEach((w2, i) => lines.push(` ${VERBS.length + Object.keys(catalog).length + i + 1}. ${w2.name} (${w2.price}G)`));
+  ui.push(new Info(`できることずかん — ぜんぶで ${total}こ (しんかで まいにち ふえる)`, lines, () => ui.clear()));
 }
 
 function requestBoard(): string[] {
@@ -1329,6 +1398,11 @@ function requestBoard(): string[] {
       lines.push(`◆ ${myRegion.displayName}の きんこは ${treasury}G。あと${nextGold - treasury}Gの きふで ${municipalRank(tier + 1)}に はってんする!`);
     }
     void residents;
+  }
+
+  const spot = treasureSpot();
+  if (spot && !myItems().some((i) => i.kind === "takara")) {
+    lines.push(`◆ たからのうわさ: ちずの (${Math.round(spot[0] / 10) * 10}, ${Math.round(spot[1] / 10) * 10}) ふきんに なにかが ねむる…`);
   }
 
   return lines.length > 0 ? lines.slice(0, 14) : ["いまは とくに いらいは ない。へいわだ。"];
@@ -1546,9 +1620,11 @@ function fieldMenu(): void {
         { label: "つよさ", value: "status" },
         { label: "クエスト", value: "quests" },
         { label: "いらいのふだ (いま できること)", value: "requests" },
+        { label: "できることずかん (C)", value: "compendium" },
         { label: "どうぐ", value: "items" },
         { label: "ものづくり (ならったわざ)", value: "craft" },
         { label: "けんちく (めのまえに たてる)", value: "build" },
+        { label: "だいどうげいをする", value: "perform" },
         { label: "こどもを むかえる", value: "child" },
         { label: "ちず (M)", value: "map" },
         { label: "むらを たてる", value: "found" },
@@ -1609,6 +1685,11 @@ function fieldMenu(): void {
           }
         } else if (value === "build") {
           buildMenu();
+        } else if (value === "perform") {
+          void runAct({ kind: "forage", itemKind: "daidogei" }, "だいどうげい").then(() => {
+            particles.firework(player.x, player.y - 1);
+            log.push("ひろうした! みていた ひとが あとで おひねりを くれるかも…");
+          });
         } else if (value === "child") {
           const me = heroAgent();
           const married = me ? weddingBook.isMarried(me.id) : false;
@@ -1635,6 +1716,8 @@ function fieldMenu(): void {
               }, () => ui.clear()),
             );
           }
+        } else if (value === "compendium") {
+          compendium();
         } else if (value === "requests") {
           ui.push(new Info("いらいのふだ — いま せかいが もとめていること", requestBoard(), () => ui.pop()));
         } else if (value === "quests") {
@@ -1723,6 +1806,22 @@ function interact(): void {
       saveJournal(j);
     }
     ui.push(new Info("いきもの", lines[critter.kind] ?? ["なにかが いる。"], () => ui.pop()));
+    return;
+  }
+  const spot2 = treasureSpot();
+  if (spot2 && Math.abs(player.x - spot2[0]) <= 1 && Math.abs(player.y - spot2[1]) <= 1 && !myItems().some((i) => i.kind === "takara")) {
+    ui.push(
+      new Menu("あしもとの つちが もりあがっている…", [
+        { label: "ほる", value: "dig" },
+        { label: "やめる", value: "cancel" },
+      ], (v) => {
+        if (v === "dig") {
+          void runAct({ kind: "forage", itemKind: "takara" }, "たからを ほりだす").then(() => {
+            extraExtra("たからを ほりあてた! しょうにんが たかく かいとってくれるぞ!");
+          });
+        } else ui.clear();
+      }, () => ui.clear()),
+    );
     return;
   }
   const tile = tileAt(map, fx, fy);
@@ -2217,7 +2316,7 @@ window.addEventListener("keydown", (e) => {
     se("confirm");
     ui.push(new Info("たすけ — できることの すべて", [
       "やじるしキー: あるく (Shift: ダッシュ)  Enter: はなす/しらべる",
-      "E: けいざいしんぶん  M: ちず  L: せかいのログ  Q: いらいのふだ  H: このヘルプ",
+      "E: けいざい  M: ちず  L: ログ  Q: いらい  C: できることずかん  H: ヘルプ",
       "",
       "― ひととの かかわり ―",
       "はなす / みのうえを きく / ゴールドや どうぐを わたす / ほしょうする",
@@ -2230,8 +2329,13 @@ window.addEventListener("keydown", (e) => {
       "どうぐや: かいもの  びょういん / えき(ちかつうろ) / くうこう / こうかせん",
       "",
       "― じぶんの じんせい ―",
-      "むらを たてる / けんちく(いえ・みせ・とう を たてる) / ものづくり / こどもを むかえる",
+      "むらを たてる / けんちく(いえ・はたけ・とう) / ものづくり / だいどうげい / よきん / たからさがし",
     ], () => ui.clear()));
+    return;
+  }
+  if (e.key === "c" || e.key === "C") {
+    se("confirm");
+    compendium();
     return;
   }
   if (e.key === "q" || e.key === "Q") {
@@ -2862,6 +2966,15 @@ function render(): void {
 
   const heroPair = sprites.heroFor(titleTier(title));
   ctx.drawImage(heroPair[player.frame === 0 ? 0 : 1], player.px - camX, player.py - camY);
+
+  // A pet pads along behind its keeper (the deed is a real item; the walk is love).
+  const pet = myItems().find((i) => i.kind.startsWith("pet"));
+  if (pet) {
+    petTrail.x += (player.px - CELL * player.dx - petTrail.x) * 0.12;
+    petTrail.y += (player.py - CELL * player.dy - petTrail.y) * 0.12;
+    const critterSprite = sprites.critters[pet.kind === "petusagi" ? "usagi" : "slime"];
+    if (critterSprite) ctx.drawImage(critterSprite, petTrail.x - camX, petTrail.y - camY - 4 + Math.sin(performance.now() / 220) * 2);
+  }
 
   wildlife.render(ctx, camX, camY);
   particles.render(ctx, camX, camY);
