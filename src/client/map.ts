@@ -11,9 +11,9 @@ import { friendlyPairs } from "./shop";
 export const MAP_W = 360;
 export const MAP_H = 240;
 export const MIN_PLOT_W = 14;
-export const MAX_PLOT_W = 42;
+export const MAX_PLOT_W = 240; // two thirds of the world — megacities may sprawl
 export const MIN_PLOT_H = 11;
-export const MAX_PLOT_H = 27;
+export const MAX_PLOT_H = 160;
 
 export const enum Tile {
   Grass = 0,
@@ -295,14 +295,19 @@ function carveVillage(
   slotIndex: number,
   residents: number,
   tier: number,
+  treasury: number,
+  globalProtected: Set<number>,
 ): Omit<Village, "regionId" | "displayName"> {
   const rng = villageRng(regionId);
   const slot = SLOTS[slotIndex % SLOTS.length] ?? SLOTS[0]!;
-  const [vx, vy] = slot;
-  // Territory grows with the settlement: population and development push the
-  // fence outward, from a hamlet's clearing to a city's sprawl.
-  const w = Math.max(MIN_PLOT_W, Math.min(MAX_PLOT_W, 15 + Math.floor(residents * 1.3) + tier * 4 + Math.floor(rng() * 3)));
-  const h = Math.max(MIN_PLOT_H, Math.min(MAX_PLOT_H, 11 + Math.floor(residents * 0.8) + tier * 3 + Math.floor(rng() * 3)));
+  // Territory grows with the settlement: population, development AND wealth
+  // push the fence outward — a metropolis sprawls from its slot's centre and
+  // may swallow its neighbours whole (併合), who live on as districts (包含).
+  const spread = tier >= 3 ? Math.floor(residents * 1.6) + Math.floor(treasury / 8) : tier >= 2 ? Math.floor(residents * 1.2) + Math.floor(treasury / 16) : residents;
+  const w = Math.max(MIN_PLOT_W, Math.min(MAX_PLOT_W, 15 + Math.floor(spread * 1.3) + tier * 4 + Math.floor(rng() * 3)));
+  const h = Math.max(MIN_PLOT_H, Math.min(MAX_PLOT_H, 11 + Math.floor(spread * 0.8) + tier * 3 + Math.floor(rng() * 3)));
+  const vx = Math.max(2, Math.min(MAP_W - w - 2, slot[0] + 21 - Math.floor(w / 2)));
+  const vy = Math.max(2, Math.min(MAP_H - h - 2, slot[1] + 16 - Math.floor(h / 2)));
   const biome = biomeAt(vx + Math.floor(w / 2), vy + Math.floor(h / 2));
   // A full city paves over its biome; towns and villages keep the local ground.
   const [g1, g2] = tier >= 2 ? ([Tile.Pavement, Tile.Pavement] as const) : biomeGround(biome);
@@ -335,6 +340,7 @@ function carveVillage(
 
   // Ground everywhere inside; a fence traces the organic edge.
   for (const packed of cells) {
+    if (globalProtected.has(packed)) continue; // an earlier city's streets and halls survive the merger
     const y = Math.floor(packed / MAP_W);
     const x = packed % MAP_W;
     set(tiles, x, y, isBoundary(x, y) ? Tile.Fence : (x + y) % 7 === 0 ? g2 : g1);
@@ -449,6 +455,7 @@ function carveVillage(
     for (let y = by; y < by + bh + 1; y++) {
       for (let x = bx; x < bx + bw; x++) {
         if (protectedCells.has(key(x, y))) return true;
+        if (globalProtected.has(y * MAP_W + x)) return true;
         if (relax === 0 && !inside(x, y)) return true;
         if (relax === 1 && !inCells(x, y)) return true;
         if (relax === 2 && (x <= vx || x >= vx + w - 1 || y <= vy || y >= vy + h - 2)) return true;
@@ -739,6 +746,14 @@ function carveVillage(
     }
   }
 
+  for (const k of protectedCells) {
+    const [px2, py2] = k.split(",").map(Number);
+    if (px2 !== undefined && py2 !== undefined && Number.isFinite(px2) && Number.isFinite(py2)) globalProtected.add(py2 * MAP_W + px2);
+  }
+  for (const pt of [sign, poster, chest, stall, hall, mint, court, hospital, station, airport, plant, substation]) {
+    if (pt) globalProtected.add(pt[1] * MAP_W + pt[0]);
+  }
+
   return { x: vx, y: vy, w, h, biome, cells, tier, station, airport, plant, substation, powered: false, parent: null as string | null, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, hospital, spots, homes };
 }
 
@@ -781,12 +796,27 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     }
   }
 
-  const villages = snapshot.regions.filter((r) => r.id !== AFTERLIFE).map((region, i) => {
-    const residents = snapshot.agents.filter((a) => a.region === region.id && a.role !== "treasury").length;
-    const treasury = snapshot.agents.find((a) => a.id === `treasury@${region.id}`)?.balances.currency ?? 0;
-    const carved = carveVillage(tiles, region.id, i, residents, devTier(residents, treasury));
-    return { regionId: region.id, displayName: region.displayName, ...carved };
-  });
+  const settle = snapshot.regions
+    .filter((r) => r.id !== AFTERLIFE)
+    .map((region, i) => {
+      const residents = snapshot.agents.filter((a) => a.region === region.id && a.role !== "treasury").length;
+      const treasury = snapshot.agents.find((a) => a.id === `treasury@${region.id}`)?.balances.currency ?? 0;
+      return { region, i, residents, treasury, tier: devTier(residents, treasury) };
+    });
+  // Carve the great cities first: whoever comes later carves INTO them, so a
+  // swallowed hamlet keeps its old walls as a district of the metropolis.
+  const globalProtected = new Set<number>();
+  const villages: Village[] = [];
+  const carveOrder = [...settle].sort((p1, p2) => p2.residents + p2.tier * 20 + p2.treasury / 8 - (p1.residents + p1.tier * 20 + p1.treasury / 8));
+  const byIndex = new Map<number, Village>();
+  for (const m of carveOrder) {
+    const carved = carveVillage(tiles, m.region.id, m.i, m.residents, m.tier, m.treasury, globalProtected);
+    byIndex.set(m.i, { regionId: m.region.id, displayName: m.region.displayName, ...carved });
+  }
+  for (const m of settle) {
+    const v = byIndex.get(m.i);
+    if (v) villages.push(v);
+  }
 
   // Municipal nesting: a settlement whose centre falls inside a HIGHER-tier
   // settlement's territory becomes a district (ちく) of that city — 村の中に村.
