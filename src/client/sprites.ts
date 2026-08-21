@@ -44,6 +44,18 @@ const PALETTE: Record<string, string> = {
   Z: "#ffffff", // snow bright
   u: "#4a5a30", // swamp murk
   U: "#5d7038", // swamp murk light
+  l: "#35ae52", // grass bright blade
+  D: "#0c3a15", // deepest green shadow
+  i: "#8ab4f2", // water sparkle
+  j: "#143c92", // deep water
+  O: "#8a4a16", // mid wood / tilled soil
+  E: "#efe8cf", // plaster light
+  M: "#9298a2", // stone light
+  K: "#3c4048", // stone dark / iron
+  P: "#e87aa0", // petal pink
+  Y: "#ffe27a", // warm lamplight
+  A: "#e8963c", // amber accent
+  I: "#b8dff5", // ice / glass light
 };
 
 function draw(rows: readonly string[], scale = SCALE): HTMLCanvasElement {
@@ -65,28 +77,96 @@ function draw(rows: readonly string[], scale = SCALE): HTMLCanvasElement {
 
 const R = (s: string): string[] => Array.from({ length: 16 }, () => s);
 
-const GRASS = R("gggggggggggggggg").map((row, y) => (y % 5 === 2 ? "ggGgggggdggggGgg" : y % 7 === 4 ? "gggggdggggGggggg" : row));
-const GRASS2 = R("gggggggggggggggg").map((row, y) => (y % 4 === 1 ? "ggggGgggggggdggg" : row));
-const WATER = R("wwwwwwwwwwwwwwww").map((row, y) => (y % 4 === 0 ? "wWwwwwWWwwwwWwww" : row));
-const SAND = R("ssssssssssssssss").map((row, y) => (y % 5 === 3 ? "ssSssssssSssssss" : row));
+const GRASS = [
+  "gggggggggggggglg",
+  "gggggdGggggggggl",
+  "gggdgGgggggggglg",
+  "gglgdggggGgggggg",
+  "gGggggggggggdglg",
+  "dglggGgggggggggg",
+  "gdgggglggggggggg",
+  "dggggggGgggggglg",
+  "gggggglgggGgggdg",
+  "gggggggGgdgggggl",
+  "Ggdggggggggggglg",
+  "gglgggggGggggdgg",
+  "ggggggglGgdggggg",
+  "dglggggggGgggggg",
+  "ggglggggggggdggg",
+  "gglggggggGggdggg",
+];
+const GRASS2 = [
+  "lgdggggggGgggggg",
+  "gggggggggGggldgg",
+  "ggggdglggggGgggg",
+  "lgggggggGgggggdg",
+  "lggggggGggggggdg",
+  "ggdGgggggggggggl",
+  "dgggPgggggggglgg",
+  "gdgggglggggGgggg",
+  "gGggglgggggdgggg",
+  "ggggggGgggglgggg",
+  "gglggggggGdggggg",
+  "gggggdggggggyggl",
+  "ggggglggggggggGg",
+  "gggggGlgggdggggg",
+  "ggdlgggggggggggg",
+  "gdgggggglggggGgg",
+];
+const WATER = [
+  "wwwwwwwwwwwwwwww",
+  "wwwWiWwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "WWwwwwwwwwwwwwww",
+  "wwwwjwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwWiWwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwjwWiWwwww",
+  "wwwwwwwwwwwWWwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+];
+const SAND = [
+  "ssssssssSssSssss",
+  "SsssssssssssssSs",
+  "sSsssssSssssssss",
+  "ssSSSSssssSSssss",
+  "sssssssssssSsssS",
+  "sssssssSssssSsss",
+  "sssSsssSssssssss",
+  "SsssssSsssssssss",
+  "ssssssssSssssSss",
+  "ssSSSSssssSSSsss",
+  "ssSssSssssssssss",
+  "ssssSsssssssssSs",
+  "ssssSsssssssssss",
+  "SsSSSsssssSSssss",
+  "ssssssSsssssssss",
+  "sssssSssssssssss",
+];
 
 const TREE = [
-  "....ttTTtt......",
-  "...tTTTTTTt.....",
-  "..tTTtTTTTTt....",
-  ".tTTTTTTtTTTt...",
-  ".tTtTTTTTTTTt...",
-  "tTTTTtTTTTtTTt..",
-  "tTTTTTTTTTTTTt..",
-  ".ttTTTTtTTTtt...",
-  "..tttTTTTttt....",
-  "....ttbbtt......",
-  ".....bbbb.......",
-  ".....bbbb.......",
-  "gggggbbbbgggggg.",
+  "................",
+  ".....tTTTt......",
+  "....tTlllTt.....",
+  "...tTllGllTt....",
+  "..tTlGGlGGlTt...",
+  "..tTlGlllGlTt...",
+  ".tTllGlGGllTt...",
+  ".tTGllGllGlTt...",
+  ".tTTllGlllTTt...",
+  "..ttTTlTTTtt....",
+  "...DtttttD......",
+  ".....xObx.......",
+  ".....xbOx.......",
+  "ggggDxbbxDgggggg",
   "ggggdggggggGgggg",
   "gggggggdgggggggg",
-  "gggGgggggggggggg",
 ];
 
 const FENCE = [
@@ -108,72 +188,177 @@ const FENCE = [
   "gggggggggggggggg",
 ];
 
-const PATH = R("ssssssssssssssss").map((row, y) => (y % 3 === 1 ? "sSssssSssssssSss" : row));
+const PATH = [
+  "ssssssssOssSssSs",
+  "OsssSSssssssssss",
+  "ssOsssssssSsssSs",
+  "sSssssssssSsOsss",
+  "sssssSsssssssOSs",
+  "sssssSsOssssssss",
+  "sSsSOsssssssssss",
+  "ssSOssssssssSsss",
+  "ssssssSOsSssssss",
+  "ssSsssssOssssSss",
+  "ssssssSsOsssSsss",
+  "sSssssOsssSsssss",
+  "SOsssssssssssSss",
+  "ssssOsssssssSssS",
+  "SssssssSsssssOss",
+  "SssOssssssssssss",
+];
 
 const ROOF = [
-  "rrrrrrrrrrrrrrrr",
-  "rRRrrRRrrRRrrRRr",
-  "rrrrrrrrrrrrrrrr",
-  "RRrrRRrrRRrrRRrr",
-  "rrrrrrrrrrrrrrrr",
-  "rRRrrRRrrRRrrRRr",
-  "rrrrrrrrrrrrrrrr",
-  "RRrrRRrrRRrrRRrr",
-  "rrrrrrrrrrrrrrrr",
-  "rRRrrRRrrRRrrRRr",
-  "rrrrrrrrrrrrrrrr",
-  "RRrrRRrrRRrrRRrr",
-  "rrrrrrrrrrrrrrrr",
-  "rRRrrRRrrRRrrRRr",
+  "RRRRRRRRRRRRRRRR",
+  "rrrxrrrxrrrxrrrx",
+  "rRrxrRrxrRrxrRrx",
+  "rrrxrrrxrrrxrrrx",
+  "RRRRRRRRRRRRRRRR",
+  "rxrrrxrrrxrrrxrr",
+  "rxrRrxrRrxrRrxrR",
+  "rxrrrxrrrxrrrxrr",
+  "RRRRRRRRRRRRRRRR",
+  "rrrxrrrxrrrxrrrx",
+  "rRrxrRrxrRrxrRrx",
+  "rrrxrrrxrrrxrrrx",
+  "RRRRRRRRRRRRRRRR",
+  "rxrrrxrrrxrrrxrr",
   "xxxxxxxxxxxxxxxx",
   "hhhhhhhhhhhhhhhh",
 ];
 
 const WALL = [
-  "hhhhhhhhhhhhhhhh",
-  "hHhhhhHhhhhHhhhh",
-  "hhhhhhhhhhhhhhhh",
-  "hhhHhhhhhHhhhhhh",
-  "hhhhhhhhhhhhhhhh",
-  "hHhhhhHhhhhHhhhh",
-  "hhhhhhhhhhhhhhhh",
-  "hhhHhhhhhHhhhhhh",
-  "hhhhhhhhhhhhhhhh",
-  "hHhhhhHhhhhHhhhh",
-  "hhhhhhhhhhhhhhhh",
-  "hhhHhhhhhHhhhhhh",
-  "hhhhhhhhhhhhhhhh",
-  "hHhhhhHhhhhHhhhh",
+  "bbbbbbbbbbbbbbbb",
+  "bhhhHhhhEhhhhhhb",
+  "bhhhhEhhHhhhhhhb",
+  "bhEhhhhhhhhhHEhb",
+  "bhhHhhhhhhEhhhhb",
+  "bhhhhhhEhhhhhhhb",
+  "bhhhEhhhhhhHhhhb",
+  "bEHhhhhhhhhhEhhb",
+  "bhhhhhHhhEhhhhhb",
+  "bhhhhhEhhhHhhhhb",
+  "bHhEhhhhhhhhhhEb",
+  "bhhhhHhhhhhEhhhb",
+  "bhhhhhhhEHhhhhhb",
+  "bhhhhEhhhhhhhHhb",
+  "bbbbbbbbbbbbbbbb",
   "HHHHHHHHHHHHHHHH",
-  "hhhhhhhhhhhhhhhh",
 ];
 
-const DOOR = WALL.map((row, y) => {
-  if (y < 4) return row;
-  return `${row.slice(0, 4)}xkkkkkkkx${row.slice(13)}`.slice(0, 16);
-});
+const DOOR = [
+  "bbbbbbbbbbbbbbbb",
+  "bhhhHhhhEhhhhhhb",
+  "bhhhhEhhHhhhhhhb",
+  "bhEhhhxxxxhhHEhb",
+  "bhhHhxkOkkxhhhhb",
+  "bhhhhxkOkkxhhhhb",
+  "bhhhExkOkkxHhhhb",
+  "bEHhhxkOkkxhEhhb",
+  "bhhhhxkOkkxhhhhb",
+  "bhhhhxkOkyxhhhhb",
+  "bHhEhxkOkkxhhhEb",
+  "bhhhhxkOkkxEhhhb",
+  "bhhhhxkOkkxhhhhb",
+  "bhhhhxkOkkxhhHhb",
+  "bbbbbbbbbbbbbbbb",
+  "HHHHHHHHHHHHHHHH",
+];
 
 const ROCK = [
   "gggggggggggggggg",
-  "gggggggggggggggg",
-  "ggggggmmmmgggggg",
-  "gggggmmmmmmggggg",
-  "ggggmmeemmmmgggg",
-  "gggmmmemmmmmmggg",
-  "gggmmmmmmmmmmggg",
-  "ggmmmmmmmmmmmmgg",
-  "ggmmmmmmmmxmmmgg",
-  "ggmmmmmmmmmmmmgg",
-  "ggxmmmmmmmmmmxgg",
-  "gggxxmmmmmmxxggg",
+  "ggggglgggggggggg",
+  "ggggggMMmmgggggg",
+  "gggggMMMmmmggggg",
+  "ggggMMeMmmmmgggg",
+  "gggMMMMmmmKmmggg",
+  "gggMmmmmmmmKmggg",
+  "ggMMmmmmmmmmKmgg",
+  "ggMmmmmmKmmmKmgg",
+  "ggMmmmmmmmKKKmgg",
+  "ggxmmKmmmmmKKxgg",
+  "gggxxmmKKmmxxggg",
   "gggggxxxxxxggggg",
-  "gggGgggggggdgggg",
+  "gggGgggdgggglggg",
   "gggggggggggggggg",
-  "gggggggggggggggg",
+  "ggglggggGggggggg",
 ];
 
 const SNOW = R("zzzzzzzzzzzzzzzz").map((row, y) => (y % 5 === 2 ? "zzZzzzzzmzzzzZzz" : y % 7 === 4 ? "zzzzzZzzzzzmzzzz" : row));
-const SWAMP = R("uuuuuuuuuuuuuuuu").map((row, y) => (y % 4 === 1 ? "uuUuuuuwuuuUuuuu" : y % 5 === 3 ? "uuuuUuuuuuwuuuuu" : row));
+const SWAMP = [
+  "uuuuuuuuuuuuuuuu",
+  "uuuUuuuuuuuuwuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuiuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "wuuuuuuuuuuuuuuU",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uiuuwuuuuuuUuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuUwuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuiuuuu",
+];
+
+const WATER_B = [
+  "wwwwwwwwwwwwwwww",
+  "wwwwwjwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwWiWwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwWWwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwWijwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwwwwWiWwwww",
+  "wwwwwwwwwwwwwwww",
+  "wwwwwwWWwwwjwwww",
+];
+
+const SWAMP_B = [
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuwUuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuiuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuUuuuuuuwu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuwUuuuuuuuuuuui",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuuuuuuuuuuu",
+  "uuuuuuwuuuuuuuuU",
+];
+
+const FLOWER_B = [
+  "gggggGgdgggggggg",
+  "ggggggggGggggggd",
+  "gggggGggggyygggg",
+  "gggPPgggggygggdG",
+  "ggdPgggggGtggggg",
+  "gggtgggggGgggdgg",
+  "gggggggggGgggggd",
+  "gGgggggggggggdgg",
+  "ggggggggGgdgPPgg",
+  "gggdgeeGggggPggg",
+  "gGgggeggggdgtggg",
+  "gggggtdgyygggggg",
+  "ggGgggggyggdggPP",
+  "gggGggggtgdgggPg",
+  "gggggggGdgggggtg",
+  "dgggggggggGggggg",
+];
 
 const SNOWTREE = [
   "....mmZZmm......",
@@ -213,25 +398,42 @@ const CACTUS = [
   "ssssssssssssssss",
 ];
 
-const PAVEMENT = R("mmmmmmmmmmmmmmmm").map((row, y) => (y % 8 === 0 ? "xmmmmmmmxmmmmmmm" : y % 4 === 2 ? "mmmHmmmmmmmmHmmm" : row));
+const PAVEMENT = [
+  "KmmmmmmmKmmMmmmm",
+  "KmmmmmMmKmmmmmmm",
+  "KMmmmmmmKmmmMmmm",
+  "KKKKKKKKKKKKKKKK",
+  "mmMmKmmmmmmmKMmm",
+  "mmmmKmmmMmmmKmmm",
+  "mmmMKmmmmmmmKmMm",
+  "KKKKKKKKKKKKKKKK",
+  "KmmmMmmmKmmmmmmM",
+  "KmmmmmmmKmMmmmmm",
+  "KmmmmMmmKmmmmmmm",
+  "KKKKKKKKKKKKKKKK",
+  "mmmmKmMmmmmmKmmm",
+  "mMmmKmmmmmmmKmmm",
+  "mmmmKmmMmmmmKmmm",
+  "KKKKKKKKKKKKKKKK",
+];
 
 const RAIL = [
-  "gggggggggggggggg",
-  "ggbbbbbbbbbbbbgg".replaceAll("gg", "gg"),
-  "gxxxxxxxxxxxxxxg",
-  "gggggggggggggggg",
-  "bbbbbbbbbbbbbbbb",
-  "xxxxxxxxxxxxxxxx",
-  "gggggggggggggggg",
-  "gggggggggggggggg",
-  "gggggggggggggggg",
-  "bbbbbbbbbbbbbbbb",
-  "xxxxxxxxxxxxxxxx",
-  "gggggggggggggggg",
-  "ggggggggggggggggg".slice(0, 16),
-  "gSggggggggggSggg".replaceAll("S", "b"),
-  "gggggggggggggggg",
-  "gggggggggggggggg",
+  "ggggggggggggdSgg",
+  "dggggggggggggggS",
+  "gbbggbbggbbggbbg",
+  "MMMMMMMMMMMMMMMM",
+  "KKKKKKKKKKKKKKKK",
+  "gbbggbbggbbggbbg",
+  "ggggggggggdggSgg",
+  "gbbggbbggbbggbbg",
+  "MMMMMMMMMMMMMMMM",
+  "KKKKKKKKKKKKKKKK",
+  "gbbggbbggbbggbbg",
+  "ggggSggggdgggggg",
+  "gggdgggggggSgggg",
+  "gggggggdggSggggg",
+  "ggSggggggggdgggg",
+  "ggggggdSgggggggg",
 ];
 
 const BUILDING_WALL = [
@@ -482,22 +684,22 @@ const STALL = [
 ];
 
 const FLOWER = [
-  "gggggggggggggggg",
-  "ggGggggggggdgggg",
-  "gggggeegggggggg".slice(0, 16).padEnd(16, "g"),
-  "ggggeyyegggggggg",
-  "gggggeegggggggg".padEnd(16, "g").slice(0, 16),
-  "gggggttggggeeggg",
-  "ggdggttgggeyyegg",
-  "gggggggggggeeggg",
-  "ggeeggggggggttgg",
-  "geyyeggGggggttgg",
-  "ggeegggggggggggg",
-  "ggttgggggggggggg",
-  "ggttggggdggggggg",
-  "gggggggggggggggg",
-  "ggGggggggggGgggg",
-  "gggggggggggggggg",
+  "gggggGgdgggggggg",
+  "ggggggggGggggggd",
+  "gggggGgggyyggggg",
+  "ggPPgggggyggggdG",
+  "ggPggggggtgggggg",
+  "ggtggggggGgggdgg",
+  "gggggggggGgggggd",
+  "gGgggggggggggdgg",
+  "ggggggggGgdPPggg",
+  "gggdeegGgggPgggg",
+  "gGggegggggdtgggg",
+  "ggggtgdyyGgggggg",
+  "ggGggggygggdgPPg",
+  "gggGgggtggdggPgg",
+  "gggggggGdggggtgg",
+  "dgggggggggGggggg",
 ];
 
 const WELL = [
@@ -521,21 +723,21 @@ const WELL = [
 
 const FARM = [
   "bbbbbbbbbbbbbbbb",
-  "bSbbSbbSbbSbbSbb",
+  "OOOOOOOOOOOSOOOO",
+  "OTOOTOOTOOTOOTOO",
+  "OOOOOOOSOOOOOOOO",
   "bbbbbbbbbbbbbbbb",
-  "bTbbTbbTbbTbbTbb",
+  "OOOSOOOOOOOOOOOO",
+  "OTOlTOOTOOTOlTOO",
+  "OOOOOOOOOOOOSOOO",
   "bbbbbbbbbbbbbbbb",
-  "bSbbSbbSbbSbbSbb",
+  "OOOOOOOOSOOOOOOO",
+  "OTOOTOOTlOTOOTOO",
+  "OOOOSOOOOOOOOOOO",
   "bbbbbbbbbbbbbbbb",
-  "bTbbTbbTbbTbbTbb",
-  "bbbbbbbbbbbbbbbb",
-  "bSbbSbbSbbSbbSbb",
-  "bbbbbbbbbbbbbbbb",
-  "bTbbTbbTbbTbbTbb",
-  "bbbbbbbbbbbbbbbb",
-  "bSbbSbbSbbSbbSbb",
-  "bbbbbbbbbbbbbbbb",
-  "bbbbbbbbbbbbbbbb",
+  "SOOOOOOOOOOOOSOO",
+  "OTOOTOOTOOTOOTOO",
+  "OOOOOOOOOSOOOOOO",
 ];
 
 const LAMP = [
@@ -615,26 +817,32 @@ const CHEST = [
 
 /** A 16x16 DQ-style walker. `body` picks the tunic color key; two frames swap feet. */
 function person(body: string, frame: 0 | 1): string[] {
-  const b = body;
-  const feet = frame === 0 ? `....xkk...kkx...` : `......xkkkx.....`;
-  return [
+  // Shaded 2-frame walk: highlight letter per tunic color, swinging arms,
+  // alternating stride. β = tunic, λ = highlight, φ = hair.
+  const LIGHT: Record<string, string> = { a: "T", o: "A", v: "N", m: "M", e: "E", B: "N", y: "Y", r: "R" };
+  const HAIR: Record<string, string> = { a: "b", o: "k", v: "k", m: "K", e: "b", B: "k", y: "b", r: "k" };
+  const walkA = frame === 0;
+  const grid = [
     "................",
     ".....xxxxxx.....",
-    "....xkkkkkkx....",
-    "....xkkkkkkx....",
+    "....xφφφφφφx....",
+    "....xφφφφφφx....",
     "....xppppppx....",
     "....xpxppxpx....",
     "....xppppppx....",
     ".....xppppx.....",
-    `....x${b}${b}${b}${b}${b}${b}x....`,
-    `...x${b}${b}${b}${b}${b}${b}${b}${b}x...`,
-    `...xp${b}${b}${b}${b}${b}${b}px...`,
-    `....x${b}${b}${b}${b}${b}${b}x....`,
-    `....x${b}${b}x${b}${b}x.....`.slice(0, 16),
-    "....xkkxxkkx....",
-    feet,
+    "....xλββββx.....",
+    walkA ? "..xpxλβββββxpx.." : "...xλββββββx....",
+    walkA ? "..xxxλβββββxxx.." : "..xpλββββββββx..",
+    "....xλββββββx...",
+    "....xββxxβββx...",
+    walkA ? "....xkkxxkkx...." : ".....xkkxkkx....",
+    walkA ? "....xkk..kkx...." : "......xkkkx.....",
     "................",
   ];
+  const light = LIGHT[body] ?? "e";
+  const hair = HAIR[body] ?? "k";
+  return grid.map((row) => row.padEnd(16, ".").slice(0, 16).replaceAll("β", body).replaceAll("λ", light).replaceAll("φ", hair));
 }
 
 interface HeroLook {
@@ -773,6 +981,8 @@ const USAGI = [
 
 export interface SpriteSet {
   readonly tiles: ReadonlyMap<Tile, HTMLCanvasElement>;
+  /** Second animation frames — water glitters, marsh bubbles, petals sway. */
+  readonly tilesAlt: ReadonlyMap<Tile, HTMLCanvasElement>;
   /** The hero pair for a title tier (0..5); built lazily and cached. */
   heroFor(tier: number): readonly [HTMLCanvasElement, HTMLCanvasElement];
   readonly roles: Readonly<Record<string, readonly [HTMLCanvasElement, HTMLCanvasElement]>>;
@@ -833,10 +1043,16 @@ export function buildSprites(): SpriteSet {
     [Tile.RailElevated, draw(RAIL_ELEV)],
     [Tile.RoadElevated, draw(ROAD_ELEV)],
   ]);
+  const tilesAlt = new Map<Tile, HTMLCanvasElement>([
+    [Tile.Water, draw(WATER_B)],
+    [Tile.Swamp, draw(SWAMP_B)],
+    [Tile.Flower, draw(FLOWER_B)],
+  ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();
   return {
     tiles,
+    tilesAlt,
     heroFor(tier: number) {
       const clamped = Math.max(0, Math.min(tier, HERO_LOOKS.length - 1));
       let cached = heroCache.get(clamped);

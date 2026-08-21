@@ -2371,12 +2371,13 @@ function render(): void {
   camYg = camY;
   const x0 = Math.floor(camX / CELL);
   const y0 = Math.floor(camY / CELL);
+  const animFrame = Math.floor(performance.now() / 520) % 2 === 1;
 
   const lights: (readonly [number, number])[] = [];
   for (let y = y0; y <= y0 + Math.ceil(h / CELL); y++) {
     for (let x = x0; x <= x0 + Math.ceil(w / CELL); x++) {
       const t = tileAt(map, x, y);
-      const sprite = sprites.tiles.get(t);
+      const sprite = (animFrame ? sprites.tilesAlt.get(t) : undefined) ?? sprites.tiles.get(t);
       if (sprite) ctx.drawImage(sprite, x * CELL - camX, y * CELL - camY);
       if (t === Tile.Lamp || t === Tile.WallWindow || t === Tile.WallWoodWindow || t === Tile.TowerGlass) lights.push([x, y] as const);
     }
