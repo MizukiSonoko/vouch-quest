@@ -226,7 +226,7 @@ const okName = (x: unknown): x is string => typeof x === "string" && /^[A-Za-z][
 function merge(genome: Genome, add: Additions): { genome: Genome; grown: string[] } {
   const grown: string[] = [];
   for (const v of (add.vocab ?? []).slice(0, 8)) {
-    if (okKind(v.kind) && okShort(v.name, 24) && !(v.kind in genome.vocab) && Object.keys(genome.vocab).length < 200) {
+    if (okKind(v.kind) && okShort(v.name, 24) && !(v.kind in genome.vocab) && Object.keys(genome.vocab).length < 400) {
       genome.vocab[v.kind] = v.name;
       grown.push(`vocab:${v.kind}`);
     }
@@ -235,7 +235,7 @@ function merge(genome: Genome, add: Additions): { genome: Genome; grown: string[
     if (!/^[a-z]{2,16}$/.test(c.pool)) continue;
     const pool = (genome.chatter[c.pool] ??= []);
     for (const line of (c.lines ?? []).slice(0, 14)) {
-      if (okShort(line, 64) && !pool.includes(line) && pool.length < 80) {
+      if (okShort(line, 64) && !pool.includes(line) && pool.length < 120) {
         pool.push(line);
         grown.push(`chatter:${c.pool}`);
       }
@@ -245,7 +245,7 @@ function merge(genome: Genome, add: Additions): { genome: Genome; grown: string[
     if (
       okKind(w.kind) && okShort(w.name, 24) && okShort(w.blurb, 64) &&
       Number.isInteger(w.price) && w.price >= 1 && w.price <= 500 &&
-      !genome.wares.some((x) => x.kind === w.kind) && genome.wares.length < 30
+      !genome.wares.some((x) => x.kind === w.kind) && genome.wares.length < 60
     ) {
       genome.wares.push({ kind: w.kind, name: w.name, price: w.price, blurb: w.blurb });
       grown.push(`ware:${w.kind}`);
@@ -255,7 +255,7 @@ function merge(genome: Genome, add: Additions): { genome: Genome; grown: string[
     if (
       okName(p.name) && (p.role === "artisan" || p.role === "merchant" || p.role === "broker") &&
       okKind(p.craft) && okShort(p.greeting, 64) &&
-      !genome.professions.some((x) => x.name === p.name) && genome.professions.length < 24
+      !genome.professions.some((x) => x.name === p.name) && genome.professions.length < 40
     ) {
       genome.professions.push({ name: p.name, role: p.role, craft: p.craft, greeting: p.greeting });
       grown.push(`profession:${p.name}`);
@@ -266,7 +266,7 @@ function merge(genome: Genome, add: Additions): { genome: Genome; grown: string[
     const mlines = (mu.lines ?? []).filter((l) => okShort(l, 64)).slice(0, 4);
     if (mlines.length > 0) {
       genome.mutations.push({ id: genome.version + 1, kind: mu.kind, title: mu.title, lines: mlines });
-      genome.mutations = genome.mutations.slice(-12);
+      genome.mutations = genome.mutations.slice(-20);
       grown.push(`mutation:${mu.kind}:${mu.title}`);
     }
   }

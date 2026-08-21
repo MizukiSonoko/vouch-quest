@@ -688,7 +688,7 @@ function loadGenomeProfs(): GenomeProf[] {
         out.push({ name, role, craft });
       }
     }
-    return out.slice(0, 24);
+    return out.slice(0, 40);
   } catch {
     return [];
   }
