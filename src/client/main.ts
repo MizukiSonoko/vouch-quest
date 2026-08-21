@@ -365,6 +365,21 @@ function celebrate(): void {
           if (couple) {
             extraExtra(`ごうがい! ${couple[0]}と ${couple[1]}が けっこんした!`);
             if (at) particles.firework(at[0], at[1]);
+            // The village throws a ceremony: couple to the hall, guests gather.
+            const va = map?.villages.find((v) => v.regionId === (couple[0].split("@")[1] ?? ""));
+            if (va) {
+              wedding = { a: couple[0], b: couple[1], village: va, until: performance.now() + 14_000 };
+              const [hx, hy] = va.hall;
+              for (const m of mobs) {
+                if (m.agent.id === couple[0]) m.target = [hx - 1, hy + 1];
+                else if (m.agent.id === couple[1]) m.target = [hx + 1, hy + 1];
+                else if (m.home?.regionId === va.regionId && Math.random() < 0.8) {
+                  m.target = [hx - 3 + Math.floor(Math.random() * 7), hy + 2 + Math.floor(Math.random() * 3)];
+                  m.hiddenUntil = 0;
+                  m.bubble = { text: Math.random() < 0.5 ? "おめでとう!" : "おしあわせに!", until: performance.now() + 6000 };
+                }
+              }
+            }
           }
         }
         break;
@@ -562,6 +577,9 @@ function wantOf(agent: AgentView): Ware | null {
 
 /** たいまつ: a lit torch pushes back the night around the hero for a while. */
 let torchUntil = 0;
+
+/** A wedding in progress: the couple and guests gather at the town hall. */
+let wedding: { a: string; b: string; village: Village; until: number } | null = null;
 
 const OMIKUJI = ["だいきち! きょうは しんらいが めぐる ひ。", "きち。とりひきに よき ひ。", "ちゅうきち。たびに でるが よい。", "しょうきち。ちいさな しんせつが かえってくる。", "すえきち。あわてず こつこつ。", "きょう…は きにせず わらって すごせ。"];
 
@@ -2629,6 +2647,31 @@ function render(): void {
       ctx.fillRect(hx - 170, hy - 170, 340, 340);
     }
     ctx.globalCompositeOperation = "source-over";
+  }
+
+  if (wedding) {
+    if (performance.now() >= wedding.until) {
+      wedding = null;
+    } else {
+      const [hx, hy] = wedding.village.hall;
+      const now2 = performance.now();
+      ctx.font = '18px "DotGothic16", monospace';
+      for (let k = 0; k < 6; k++) {
+        const ph = (now2 / 900 + k * 0.31) % 1;
+        const px2 = hx * CELL - camX + CELL / 2 + Math.sin((ph + k) * 6.3) * 30 + (k - 3) * 16;
+        const py2 = (hy + 1) * CELL - camY - ph * 70;
+        ctx.fillStyle = `rgba(232, 122, 160, ${(1 - ph).toFixed(2)})`;
+        ctx.fillText("♥", px2, py2);
+      }
+      const label2 = `〜 けっこんしき 〜`;
+      ctx.font = '17px "DotGothic16", monospace';
+      const lw = ctx.measureText(label2).width;
+      ctx.fillStyle = "#000";
+      ctx.fillText(label2, hx * CELL - camX + CELL / 2 - lw / 2 + 2, (hy - 3) * CELL - camY + 2);
+      ctx.fillStyle = "#ffd75e";
+      ctx.fillText(label2, hx * CELL - camX + CELL / 2 - lw / 2, (hy - 3) * CELL - camY);
+      if (Math.random() < 0.02) particles.firework(hx + Math.floor(Math.random() * 5) - 2, hy - 1);
+    }
   }
 
   if (layerZ !== 0) renderLayer(camX, camY, w, h);
