@@ -670,11 +670,12 @@ function carveVillage(
       const x = packed % MAP_W;
       if (get(tiles, x, y) !== Tile.TowerWall) continue;
       const below = get(tiles, x, y + 1);
-      if (below !== Tile.Pavement && below !== Tile.Crossing) continue;
+      const facing = below === Tile.Pavement || below === Tile.Crossing || below === Tile.Path || below === Tile.HouseDoor;
+      if (!facing) continue;
       if (!billboardPlaced) {
         set(tiles, x, y, Tile.Billboard);
         billboardPlaced = true;
-      } else if (rng() < 0.45) {
+      } else if (rng() < 0.6) {
         set(tiles, x, y, Tile.Neon);
       }
     }
