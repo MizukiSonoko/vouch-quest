@@ -983,11 +983,224 @@ export interface SpriteSet {
   readonly tiles: ReadonlyMap<Tile, HTMLCanvasElement>;
   /** Second animation frames — water glitters, marsh bubbles, petals sway. */
   readonly tilesAlt: ReadonlyMap<Tile, HTMLCanvasElement>;
+  /** Rolling stock, drawn rotated along the rails. */
+  readonly trains: { readonly engine: HTMLCanvasElement; readonly coach: HTMLCanvasElement };
+  /** Interior furnishing sprites for the room scene. */
+  readonly interior: Readonly<Record<string, HTMLCanvasElement>>;
   /** The hero pair for a title tier (0..5); built lazily and cached. */
   heroFor(tier: number): readonly [HTMLCanvasElement, HTMLCanvasElement];
   readonly roles: Readonly<Record<string, readonly [HTMLCanvasElement, HTMLCanvasElement]>>;
   readonly critters: Readonly<Record<string, HTMLCanvasElement>>;
 }
+
+const TRAIN_ENGINE = [
+  "................",
+  "..xxxxxxxxxx....",
+  ".xKKKKKKKKKKx...",
+  ".xKrrrrrrrrKxx..",
+  ".xKrIIrIIrrKxYx.",
+  ".xKrIIrIIrrKxYx.",
+  ".xKrrrrrrrrKxx..",
+  ".xKKKKKKKKKKx...",
+  ".xKmKKmKKmKKx...",
+  ".xxxxxxxxxxxx...",
+  "..xMMx..xMMx....",
+  "..xMMx..xMMx....",
+  "...xx....xx.....",
+  "................",
+  "................",
+  "................",
+];
+
+const TRAIN_COACH = [
+  "................",
+  "..xxxxxxxxxx....",
+  ".xNNNNNNNNNNx...",
+  ".xNIINIINIINx...",
+  ".xNIINIINIINx...",
+  ".xNNNNNNNNNNx...",
+  ".xNNNNNNNNNNx...",
+  ".xKKKKKKKKKKx...",
+  ".xxxxxxxxxxxx...",
+  "..xMMx..xMMx....",
+  "..xMMx..xMMx....",
+  "...xx....xx.....",
+  "................",
+  "................",
+  "................",
+  "................",
+];
+
+const RAIL_ELEV_NE = [
+  "Kdddddddddddxmmm",
+  "ddddddddddKxmbmm",
+  "dddddddKddxmmmbm",
+  "ddddKddddxmbmmmx",
+  "dKddddddxmmmbmxd",
+  "dddddddxmbmmmxdd",
+  "ddddddxmmmbmxddd",
+  "dddddxmbmmmxdddd",
+  "ddKdxmmmbmxdKddd",
+  "dddxmbmmmxdddddd",
+  "ddxmmmbmxddddddK",
+  "dxmbmmmxdddKdddd",
+  "xmmmbmxKdddddddd",
+  "mbmmmxddddddddKd",
+  "mmbmxdddddKddddd",
+  "mmmxddKddddddddd",
+];
+
+const RAIL_ELEV_SE = [
+  "bmmxdddddddKdddd",
+  "mmmbxddKdddddddd",
+  "mmbmmxddddddddKd",
+  "xbmmmbxdddKddddd",
+  "dxmmbmmxdddddddd",
+  "ddxbmmmbxddddKdd",
+  "dddxmmbmmxdddddd",
+  "ddddxbmmmbxddddd",
+  "ddKddxmmbmmxKddd",
+  "ddddddxbmmmbxddd",
+  "dddddddxmmbmmxdK",
+  "ddddddKdxbmmmbxd",
+  "dddKdddddxmmbmmx",
+  "Kdddddddddxbmmmb",
+  "ddddddddddKxmmbm",
+  "dddddddKddddxbmm",
+];
+
+const FLOOR_WOOD = [
+  "FOOOOOOOOOOOOOOO",
+  "OOFOOOOOOOOOOOOO",
+  "OOOOFOOOOOOOOOOO",
+  "bbbbObbbbbbbObbb",
+  "OOOOOOOOFOOOOOOO",
+  "OOOOOOOOOOFOOOOO",
+  "OOOOOOOOOOOOFOOO",
+  "bbbbObbbbbbbObbb",
+  "OOOOOOOOOOOOOOOO",
+  "OFOOOOOOOOOOOOOO",
+  "OOOFOOOOOOOOOOOO",
+  "bbbbObbbbbbbObbb",
+  "OOOOOOOFOOOOOOOO",
+  "OOOOOOOOOFOOOOOO",
+  "OOOOOOOOOOOFOOOO",
+  "bbbbObbbbbbbObbb",
+];
+
+const RUG = [
+  "yyyyyyyyyyyyyyyy",
+  "yrrrrrrrrrrrrrry",
+  "yrRRRRRRRRRRRRry",
+  "yrRrrrrrrrrrrRry",
+  "yrRrrrreerrrrRry",
+  "yrRrrreeeerrrRry",
+  "yrRrreeeeeerrRry",
+  "yrRrrreeeerrrRry",
+  "yrRrrrreerrrrRry",
+  "yrRrrrrrrrrrrRry",
+  "yrRRRRRRRRRRRRry",
+  "yrrrrrrrrrrrrrry",
+  "yyyyyyyyyyyyyyyy",
+  "................",
+  "................",
+  "................",
+];
+
+const BED_SPR = [
+  "................",
+  ".xxxxxxxxxxxxxx.",
+  ".xEEEExrrrrrrrx.",
+  ".xEeeExRRrrRRrx.",
+  ".xEEEExrrRRrrrx.",
+  ".xEeeExrrrrrRRx.",
+  ".xEEEExRRrrrrrx.",
+  ".xxxxxxxxxxxxxx.",
+  ".xbx..........x.",
+  ".xbx.........bx.",
+  ".xxx.........xx.",
+  "................",
+  "................",
+  "................",
+  "................",
+  "................",
+];
+
+const TABLE_SPR = [
+  "................",
+  "................",
+  "...xxxxxxxxxx...",
+  "..xFFFFFFFFFFx..",
+  "..xFOOOOOOOOFx..",
+  "..xFOyyOOccOFx..",
+  "..xFOOOOOOOOFx..",
+  "..xFFFFFFFFFFx..",
+  "..xxxxxxxxxxxx..",
+  "...xbx....xbx...",
+  "...xbx....xbx...",
+  "...xxx....xxx...",
+  "................",
+  "................",
+  "................",
+  "................",
+];
+
+const SHELF_SPR = [
+  ".xxxxxxxxxxxxxx.",
+  ".xbbbbbbbbbbbbx.",
+  ".xbyyxbNNxbPPbx.",
+  ".xbyyxbNNxbPPbx.",
+  ".xbbbbbbbbbbbbx.",
+  ".xbCCxbeexbyybx.",
+  ".xbCCxbeexbyybx.",
+  ".xbbbbbbbbbbbbx.",
+  ".xbAAxbIIxbccbx.",
+  ".xbAAxbIIxbccbx.",
+  ".xbbbbbbbbbbbbx.",
+  ".xxxxxxxxxxxxxx.",
+  "................",
+  "................",
+  "................",
+  "................",
+];
+
+const HEARTH_A = [
+  "..xxxxxxxxxxxx..",
+  ".xMMMMMMMMMMMMx.",
+  ".xMKKKKKKKKKKMx.",
+  ".xMKxxxxxxxxKMx.",
+  ".xMKxYyyAyxxKMx.",
+  ".xMKxyAAyyyxKMx.",
+  ".xMKxAyyAyAxKMx.",
+  ".xMKxyyAyyyxKMx.",
+  ".xMKxxbbbbxxKMx.",
+  ".xMKKKKKKKKKKMx.",
+  ".xMMMMMMMMMMMMx.",
+  ".xxxxxxxxxxxxxx.",
+  "................",
+  "................",
+  "................",
+  "................",
+];
+
+const HEARTH_B = [
+  "..xxxxxxxxxxxx..",
+  ".xMMMMMMMMMMMMx.",
+  ".xMKKKKKKKKKKMx.",
+  ".xMKxxxxxxxxKMx.",
+  ".xMKxyAyYyyxKMx.",
+  ".xMKxYyyAAyxKMx.",
+  ".xMKxyAYyyAxKMx.",
+  ".xMKxAyyYyyxKMx.",
+  ".xMKxxbbbbxxKMx.",
+  ".xMKKKKKKKKKKMx.",
+  ".xMMMMMMMMMMMMx.",
+  ".xxxxxxxxxxxxxx.",
+  "................",
+  "................",
+  "................",
+  "................",
+];
 
 export function buildSprites(): SpriteSet {
   const tiles = new Map<Tile, HTMLCanvasElement>([
@@ -1042,6 +1255,8 @@ export function buildSprites(): SpriteSet {
     [Tile.TowerTop, draw(TOWER_TOP)],
     [Tile.RailElevated, draw(RAIL_ELEV)],
     [Tile.RoadElevated, draw(ROAD_ELEV)],
+    [Tile.RailElevatedNE, draw(RAIL_ELEV_NE)],
+    [Tile.RailElevatedSE, draw(RAIL_ELEV_SE)],
   ]);
   const tilesAlt = new Map<Tile, HTMLCanvasElement>([
     [Tile.Water, draw(WATER_B)],
@@ -1050,9 +1265,21 @@ export function buildSprites(): SpriteSet {
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();
+  const trains = { engine: draw(TRAIN_ENGINE), coach: draw(TRAIN_COACH) };
+  const interior: Record<string, HTMLCanvasElement> = {
+    floor: draw(FLOOR_WOOD),
+    rug: draw(RUG),
+    bed: draw(BED_SPR),
+    table: draw(TABLE_SPR),
+    shelf: draw(SHELF_SPR),
+    hearthA: draw(HEARTH_A),
+    hearthB: draw(HEARTH_B),
+  };
   return {
     tiles,
     tilesAlt,
+    trains,
+    interior,
     heroFor(tier: number) {
       const clamped = Math.max(0, Math.min(tier, HERO_LOOKS.length - 1));
       let cached = heroCache.get(clamped);

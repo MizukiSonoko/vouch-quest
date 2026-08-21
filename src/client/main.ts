@@ -167,7 +167,7 @@ const player: Player = { x: 0, y: 0, px: 0, py: 0, dx: 0, dy: 1, moving: false, 
 /** Vertical layer the hero stands on: 0 ちじょう, +1 こうか/おくじょう, -1 ちかどう.
  * Purely presentation — like walking, it moves no world state. */
 let layerZ: 0 | 1 | -1 = 0;
-const ELEVATED_TILES: ReadonlySet<Tile> = new Set([Tile.RailElevated, Tile.RoadElevated, Tile.TowerTop]);
+const ELEVATED_TILES: ReadonlySet<Tile> = new Set([Tile.RailElevated, Tile.RailElevatedNE, Tile.RailElevatedSE, Tile.RoadElevated, Tile.TowerTop]);
 let subwayCells: ReadonlySet<number> = new Set();
 const held = new Set<string>();
 const SPEED = 3.2; // px per frame at 60fps-ish
@@ -1726,7 +1726,7 @@ function interact(): void {
     return;
   }
   const tile = tileAt(map, fx, fy);
-  if (tile === Tile.RailElevated || tile === Tile.RoadElevated) {
+  if (tile === Tile.RailElevated || tile === Tile.RailElevatedNE || tile === Tile.RailElevatedSE || tile === Tile.RoadElevated) {
     ui.push(
       new Menu("こうかせんが あたまの うえを はしっている。", [
         { label: "はしらを のぼる", value: "up" },
@@ -1956,6 +1956,8 @@ const MINI_COLORS: Record<number, string> = {
   [Tile.TowerTop]: "#aab4c0",
   [Tile.RailElevated]: "#8a7a60",
   [Tile.RoadElevated]: "#9a9aa2",
+  [Tile.RailElevatedNE]: "#8a7a60",
+  [Tile.RailElevatedSE]: "#8a7a60",
 };
 const MINI_SCALE = 2;
 let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;
@@ -2465,7 +2467,8 @@ function replyLine(mob: Mob): string {
   return pick2(pool);
 }
 
-/** Trains shuttle along the rails, back and forth. `lift` raises them for the elevated view. */
+/** Trains shuttle along the rails — real rolling stock, rotated to follow the
+ * track, so the express leans into its diagonals. `lift` raises the elevated view. */
 function drawTrains(camX: number, camY: number, lift: number): void {
   if (!ctx || !map) return;
   for (const rail of map.rails) {
@@ -2473,17 +2476,22 @@ function drawTrains(camX: number, camY: number, lift: number): void {
     const span = rail.length - 1;
     const t = Math.floor(performance.now() / 130) % (span * 2);
     const head = t <= span ? t : span * 2 - t;
+    const forward = t <= span;
     for (let car = 0; car < 3; car++) {
-      const idx = Math.max(0, Math.min(span, head + (t <= span ? -car : car)));
+      const idx = Math.max(0, Math.min(span, head + (forward ? -car : car)));
       const pt = rail[idx];
       if (!pt) continue;
-      const px = pt[0] * CELL - camX + 6;
-      const py = pt[1] * CELL - camY + 10 - lift;
-      ctx.fillStyle = car === 0 ? "#c23a2e" : "#e8e8e8";
-      ctx.fillRect(px, py, 36, 24);
-      ctx.fillStyle = "#2a3a55";
-      ctx.fillRect(px + 5, py + 5, 10, 8);
-      ctx.fillRect(px + 21, py + 5, 10, 8);
+      const ahead = rail[Math.min(span, idx + 1)] ?? pt;
+      const behind = rail[Math.max(0, idx - 1)] ?? pt;
+      const ang = Math.atan2(ahead[1] - behind[1], ahead[0] - behind[0]) + (forward ? 0 : Math.PI);
+      const cx = pt[0] * CELL - camX + CELL / 2;
+      const cy = pt[1] * CELL - camY + CELL / 2 - lift;
+      const sprite = car === 0 ? sprites.trains.engine : sprites.trains.coach;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(ang);
+      ctx.drawImage(sprite, -CELL / 2, -CELL / 2);
+      ctx.restore();
     }
   }
 }
@@ -3101,8 +3109,22 @@ function renderInterior(): void {
     for (let x = 0; x < ROOM_W; x++) {
       const border = x === 0 || y === 0 || x === ROOM_W - 1 || y === ROOM_H - 1;
       const isExit = x === interior.exit[0] && y === interior.exit[1];
-      const sprite = border && !isExit ? sprites.tiles.get(Tile.WallWood) : sprites.tiles.get(Tile.Path);
+      const isRug = Math.abs(x - Math.floor(ROOM_W / 2)) <= 1 && Math.abs(y - Math.floor(ROOM_H / 2)) <= 1;
+      const sprite = border && !isExit
+        ? sprites.tiles.get(Tile.WallWood)
+        : isRug
+          ? sprites.interior["rug"]
+          : sprites.interior["floor"];
       if (sprite) ctx.drawImage(sprite, ox + x * CELL, oy + y * CELL);
+      // A lit window on the north wall; the hearth crackles beside it.
+      if (y === 0 && (x === 2 || x === ROOM_W - 3)) {
+        const win = sprites.tiles.get(Tile.WallWoodWindow);
+        if (win) ctx.drawImage(win, ox + x * CELL, oy + y * CELL);
+      }
+      if (y === 0 && x === Math.floor(ROOM_W / 2)) {
+        const hearth = Math.floor(performance.now() / 300) % 2 === 0 ? sprites.interior["hearthA"] : sprites.interior["hearthB"];
+        if (hearth) ctx.drawImage(hearth, ox + x * CELL, oy + (y + 1) * CELL);
+      }
       if (isExit) {
         ctx.fillStyle = "#3a2a16";
         ctx.fillRect(ox + x * CELL + 8, oy + y * CELL + 4, CELL - 16, CELL - 8);
@@ -3112,28 +3134,8 @@ function renderInterior(): void {
   for (const f of interior.furniture) {
     const fx = ox + f.x * CELL;
     const fy = oy + f.y * CELL;
-    if (f.kind === "bed") {
-      ctx.fillStyle = "#b03030";
-      ctx.fillRect(fx + 4, fy + 8, CELL - 8, CELL - 12);
-      ctx.fillStyle = "#f0f0f0";
-      ctx.fillRect(fx + 6, fy + 10, 14, 12);
-    } else if (f.kind === "table") {
-      ctx.fillStyle = "#8a5a2b";
-      ctx.fillRect(fx + 6, fy + 12, CELL - 12, CELL - 20);
-      ctx.fillStyle = "#5b3a1e";
-      ctx.fillRect(fx + 8, fy + CELL - 10, 5, 8);
-      ctx.fillRect(fx + CELL - 13, fy + CELL - 10, 5, 8);
-    } else if (f.kind === "shelf") {
-      ctx.fillStyle = "#6a4a2a";
-      ctx.fillRect(fx + 4, fy + 4, CELL - 8, CELL - 10);
-      ctx.fillStyle = "#e8c840";
-      ctx.fillRect(fx + 8, fy + 8, 8, 6);
-      ctx.fillStyle = "#6ad2ff";
-      ctx.fillRect(fx + 20, fy + 8, 8, 6);
-    } else {
-      const pot = sprites.tiles.get(Tile.Flower);
-      if (pot) ctx.drawImage(pot, fx, fy);
-    }
+    const spr = f.kind === "bed" ? sprites.interior["bed"] : f.kind === "table" ? sprites.interior["table"] : f.kind === "shelf" ? sprites.interior["shelf"] : sprites.tiles.get(Tile.Flower);
+    if (spr) ctx.drawImage(spr, fx, fy);
   }
   if (interior.occupant) {
     const pair = sprites.roles[interior.occupant.role] ?? sprites.roles["artisan"];

@@ -11,9 +11,9 @@ import { friendlyPairs } from "./shop";
 export const MAP_W = 360;
 export const MAP_H = 240;
 export const MIN_PLOT_W = 14;
-export const MAX_PLOT_W = 34;
+export const MAX_PLOT_W = 42;
 export const MIN_PLOT_H = 11;
-export const MAX_PLOT_H = 19;
+export const MAX_PLOT_H = 27;
 
 export const enum Tile {
   Grass = 0,
@@ -67,6 +67,8 @@ export const enum Tile {
   TowerTop = 48,
   RailElevated = 49,
   RoadElevated = 50,
+  RailElevatedNE = 51,
+  RailElevatedSE = 52,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -299,8 +301,8 @@ function carveVillage(
   const [vx, vy] = slot;
   // Territory grows with the settlement: population and development push the
   // fence outward, from a hamlet's clearing to a city's sprawl.
-  const w = Math.max(MIN_PLOT_W, Math.min(MAX_PLOT_W, 14 + residents + tier * 3 + Math.floor(rng() * 3)));
-  const h = Math.max(MIN_PLOT_H, Math.min(MAX_PLOT_H, 10 + Math.floor(residents / 2) + tier * 2 + Math.floor(rng() * 3)));
+  const w = Math.max(MIN_PLOT_W, Math.min(MAX_PLOT_W, 15 + Math.floor(residents * 1.3) + tier * 4 + Math.floor(rng() * 3)));
+  const h = Math.max(MIN_PLOT_H, Math.min(MAX_PLOT_H, 11 + Math.floor(residents * 0.8) + tier * 3 + Math.floor(rng() * 3)));
   const biome = biomeAt(vx + Math.floor(w / 2), vy + Math.floor(h / 2));
   // A full city paves over its biome; towns and villages keep the local ground.
   const [g1, g2] = tier >= 2 ? ([Tile.Pavement, Tile.Pavement] as const) : biomeGround(biome);
@@ -359,6 +361,52 @@ function carveVillage(
   const protectedCells = new Set<string>();
   const key = (x: number, y: number): string => `${x},${y}`;
   for (let y = gy - 4; y <= gy; y++) protectedCells.add(key(gx, y)); // the gate lane stays open
+
+  // ---- urban structure: streets, blocks (区画), and a central plaza --------
+  // Streets are carved FIRST and protected, so every later building lines up
+  // along them — the org chart of a town, drawn in paving stones.
+  const streetTile = tier >= 2 ? Tile.Pavement : Tile.Path;
+  const layStreet = (x: number, y: number): void => {
+    if (!inside(x, y)) return;
+    set(tiles, x, y, streetTile);
+    protectedCells.add(key(x, y));
+  };
+  // The main avenue: gate straight up through town.
+  for (let y = vy + 1; y <= gy; y++) layStreet(gx, y);
+  const midY = vy + Math.floor(h / 2);
+  if (tier >= 1) {
+    for (let x = vx + 1; x < vx + w - 1; x++) layStreet(x, midY);
+  }
+  if (tier >= 2) {
+    const aveL = vx + Math.floor(w / 4);
+    const aveR = vx + Math.floor((w * 3) / 4);
+    for (let y = vy + 1; y < vy + h - 1; y++) {
+      layStreet(aveL, y);
+      if (tier >= 3) layStreet(aveR, y);
+    }
+    const stN = vy + Math.floor(h / 4);
+    for (let x = vx + 1; x < vx + w - 1; x++) layStreet(x, stN);
+  }
+  // The plaza: an open square on the avenue where the town gathers.
+  if (tier >= 1) {
+    const pr = tier >= 2 ? 3 : 2;
+    for (let dy = -pr; dy <= pr; dy++) {
+      for (let dx = -pr; dx <= pr; dx++) {
+        const x = gx + dx;
+        const y = midY + dy;
+        if (!inside(x, y)) continue;
+        set(tiles, x, y, tier >= 2 ? Tile.Pavement : Tile.Sand);
+        protectedCells.add(key(x, y));
+      }
+    }
+    for (const [dx, dy] of [[-pr, -pr], [pr, -pr], [-pr, pr], [pr, pr]] as const) {
+      if (inside(gx + dx, midY + dy)) set(tiles, gx + dx, midY + dy, Tile.Flower);
+    }
+    if (inside(gx, midY)) {
+      set(tiles, gx, midY, Tile.Well);
+      protectedCells.add(key(gx, midY));
+    }
+  }
 
   interface Build {
     readonly roof: Tile;
@@ -500,7 +548,7 @@ function carveVillage(
   // emerge. A door swallowed by a later extension just means the family built on.
   const ROOFS: readonly Tile[] = [Tile.HouseRoof, Tile.RoofGreen, Tile.RoofBlue, Tile.RoofBrown];
   const houseDoors: { door: readonly [number, number]; tile: Tile }[] = [];
-  const houses = Math.min(Math.max(residents, 1), 20);
+  const houses = Math.min(Math.max(residents, 1), 32);
   for (let i = 0; i < houses; i++) {
     // Cities raise towers; towns get the occasional tall house; villages stay low.
     const tower = tier >= 2 && rng() < 0.55;
@@ -899,7 +947,12 @@ export function buildMap(snapshot: Snapshot): WorldMap {
       path.push([ex, ey] as const);
       if (ex < 2 || ey < 2 || ex >= MAP_W - 2 || ey >= MAP_H - 2 || inAnyPlot2(ex, ey)) continue;
       const t = tiles[ey * MAP_W + ex] ?? Tile.Grass;
-      if (t !== Tile.Station && t !== Tile.Rail) set(tiles, ex, ey, Tile.RailElevated);
+      if (t !== Tile.Station && t !== Tile.Rail) {
+        const sdx = Math.sign(b[0] - a[0]);
+        const sdy = Math.sign(b[1] - a[1]);
+        const diagonal = ex !== b[0] && ey !== b[1] && sdx !== 0 && sdy !== 0;
+        set(tiles, ex, ey, diagonal ? (sdx === sdy ? Tile.RailElevatedSE : Tile.RailElevatedNE) : Tile.RailElevated);
+      }
     }
     if (path.length > 3) rails.push(path);
   }

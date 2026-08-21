@@ -181,7 +181,7 @@ describe("heroSpawn", () => {
 
 describe("player constructions (bld deeds)", () => {
   const { buildMap, Tile, tileAt } = require("../src/client/map");
-  const region = (id) => ({
+  const region = (id: string) => ({
     id, displayName: id.toUpperCase(), owner: "Rei", status: "unrecognized", lifecycle: "active", foundedAtSeq: 1, salePrice: null,
     institutions: { governance: { kind: "dictatorship" }, itemPolicy: { minting: "anyone" }, economyPolicy: { baseCostRate: 0.2, minCostRate: 0.05 }, diplomacyPolicy: { defaultStance: "reexamine", overrides: {} } },
     openProposal: null,
