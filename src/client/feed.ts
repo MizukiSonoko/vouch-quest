@@ -3,7 +3,7 @@
 import type { LogEventView } from "../shared";
 import { AFTERLIFE, BYOKI, isChildName } from "./life";
 import { classifyRegime, type GovernanceValue, REGIME_JA } from "./politics";
-import { kindName } from "./shop";
+import { kindName, parseBuilding } from "./shop";
 
 /** First string found at any of the dot-paths — event payloads nest differently per type. */
 function str(payload: Record<string, unknown>, ...paths: string[]): string {
@@ -57,6 +57,10 @@ export function eventToMessage(event: LogEventView): string {
       return `どこからともなく おかねが うまれた…`;
     case "item.minted": {
       if (str(p, "kind") === BYOKI) return `${str(p, "owner")}が びょうきに かかった… おだいじに。`;
+      {
+        const bld = parseBuilding(str(p, "kind", "itemKind"));
+        if (bld) return `${str(p, "owner")}が ${bld.name}を たてた! まちが かわっていく。`;
+      }
       return `${str(p, "owner")}は 「${kindName(str(p, "kind", "itemKind"))}」を てにいれた!`;
     }
     case "item.transferred": {

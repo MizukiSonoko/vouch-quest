@@ -43,6 +43,13 @@ export const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("buyRegion"), regionId, ownerAgent: identifier, price: z.number().int().positive() }),
   z.object({ kind: z.literal("amendEconomy"), regionId, baseCostRate: z.number().min(0).max(1) }),
   z.object({ kind: z.literal("proposeEconomy"), regionId, baseCostRate: z.number().min(0).max(1) }),
+  z.object({
+    kind: z.literal("build"),
+    structure: z.enum(["house", "shop", "garden", "tower", "tree"]),
+    x: z.number().int().min(2).max(357),
+    y: z.number().int().min(2).max(237),
+    fee: z.number().int().min(0).max(100),
+  }),
 ]);
 
 export type Action = z.infer<typeof actionSchema>;
@@ -228,6 +235,25 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
       // Buying is a trust trade: pay the asking price to the owner's agent; the
       // owner (bot owners watch the log) signs the handover on their next waking.
       return asAgent(wallet, hero, (agent) => ({ kind: "transfer", from: agent, to: action.ownerAgent, amount: action.price }));
+    case "build": {
+      // A building IS an item: `bld<type><x>x<y>`, minted under the builder's
+      // home minting law — the town's construction-permit institution.
+      if (!hero.agentId) return { ok: false, reason: "no-agent: found or join a village first" };
+      const home = hero.agentId.split("@")[1] ?? "";
+      const regions = (await reads.regions()) as RegionView[];
+      const minting = regions.find((r) => r.id === home)?.institutions.itemPolicy.minting ?? "owner";
+      const itemKind = `bld${action.structure}${action.x}x${action.y}`;
+      const command = { kind: "mint-item", itemId: newItemId("bld"), itemKind, owner: hero.agentId };
+      const minted = minting === "owner"
+        ? await asOwner(wallet, hero, command)
+        : await asAgent(wallet, hero, () => command);
+      if (!minted.ok) return minted;
+      // The permit fee goes to the town treasury (best effort — the deed stands).
+      if (action.fee > 0) {
+        await asAgent(wallet, hero, (agent) => ({ kind: "transfer", from: agent, to: `treasury@${home}`, amount: action.fee }));
+      }
+      return minted;
+    }
     case "amendEconomy":
     case "proposeEconomy": {
       const regions = (await reads.regions()) as RegionView[];

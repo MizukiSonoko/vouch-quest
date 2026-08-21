@@ -178,3 +178,24 @@ describe("heroSpawn", () => {
     expect(y).toBe(Math.floor(MAP_H / 2) + 8);
   });
 });
+
+describe("player constructions (bld deeds)", () => {
+  const { buildMap, Tile, tileAt } = require("../src/client/map");
+  const region = (id) => ({
+    id, displayName: id.toUpperCase(), owner: "Rei", status: "unrecognized", lifecycle: "active", foundedAtSeq: 1, salePrice: null,
+    institutions: { governance: { kind: "dictatorship" }, itemPolicy: { minting: "anyone" }, economyPolicy: { baseCostRate: 0.2, minCostRate: 0.05 }, diplomacyPolicy: { defaultStance: "reexamine", overrides: {} } },
+    openProposal: null,
+  });
+  test("a house deed raises a house; water refuses construction", () => {
+    const items = [
+      { id: "bld1", kind: "bldhouse180x120", owner: "Rei@asahi" },
+      { id: "bld2", kind: "bldtree182x120", owner: "Rei@asahi" },
+      { id: "bld3", kind: "bldhouse0x0", owner: "Rei@asahi" }, // border water — refused
+    ];
+    const snap = { regions: [region("asahi")], agents: [], items, me: { heroName: "Rei", registered: true, agentId: "Rei@asahi" }, logLength: 0 };
+    const m = buildMap(snap);
+    expect(tileAt(m, 180, 120)).toBe(Tile.HouseRoof);
+    expect(tileAt(m, 180, 121)).toBe(Tile.HouseDoor);
+    expect(tileAt(m, 0, 0)).toBe(Tile.Water);
+  });
+});

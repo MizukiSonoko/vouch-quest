@@ -64,8 +64,19 @@ export function allWares(): readonly Ware[] {
   return [...CATALOG, ...EXTRA_WARES];
 }
 
+const BLD_JA: Readonly<Record<string, string>> = { house: "いえ", shop: "みせ", garden: "はなばたけ", tower: "とう", tree: "き" };
+
+/** Parse a construction-deed kind (`bld<type><x>x<y>`), if it is one. */
+export function parseBuilding(kind: string): { type: string; name: string; x: number; y: number } | null {
+  const m = /^bld(house|shop|garden|tower|tree)(\d+)x(\d+)$/.exec(kind);
+  if (!m) return null;
+  return { type: m[1] ?? "", name: BLD_JA[m[1] ?? ""] ?? "たてもの", x: Number(m[2]), y: Number(m[3]) };
+}
+
 /** Display name for any item kind — catalog names for wares, the raw kind otherwise. */
 export function kindName(kind: string): string {
+  const bld = parseBuilding(kind);
+  if (bld) return `${bld.name}の けんりしょ (${bld.x},${bld.y})`;
   const base = kind.replace(/\d+$/, "");
   return wareByKind(kind)?.name ?? EXTRA_WARES.find((w) => w.kind === base)?.name ?? EXTRA_NAMES[base] ?? LEARNED_NAMES[base] ?? kind;
 }

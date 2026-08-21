@@ -751,6 +751,42 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     v.parent = host?.regionId ?? null;
   }
 
+  // Player constructions: a `bld<type><x>x<y>` item in the log IS a building.
+  // Whoever holds the deed, the structure stands at those absolute coordinates —
+  // derived identically for every player from the shared item list.
+  const REPLACEABLE = new Set<number>([Tile.Grass, Tile.Grass2, Tile.Flower, Tile.Sand, Tile.Snow, Tile.Swamp, Tile.Path]);
+  const canPlace = (x: number, y: number): boolean => x >= 2 && y >= 2 && x < MAP_W - 2 && y < MAP_H - 2 && REPLACEABLE.has(tiles[y * MAP_W + x] ?? Tile.Water);
+  for (const item of snapshot.items) {
+    const m = /^bld(house|shop|garden|tower|tree)(\d+)x(\d+)$/.exec(item.kind);
+    if (!m) continue;
+    const bx = Number(m[2]);
+    const by = Number(m[3]);
+    const kind2 = m[1];
+    if (kind2 === "house") {
+      if (canPlace(bx, by) && canPlace(bx + 1, by) && canPlace(bx, by + 1) && canPlace(bx + 1, by + 1)) {
+        set(tiles, bx, by, Tile.HouseRoof);
+        set(tiles, bx + 1, by, Tile.HouseRoof);
+        set(tiles, bx, by + 1, Tile.HouseDoor);
+        set(tiles, bx + 1, by + 1, Tile.WallWindow);
+      }
+    } else if (kind2 === "shop") {
+      if (canPlace(bx, by)) set(tiles, bx, by, Tile.Stall);
+    } else if (kind2 === "garden") {
+      for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+        if (canPlace(bx + dx, by + dy)) set(tiles, bx + dx, by + dy, Tile.Flower);
+      }
+    } else if (kind2 === "tree") {
+      if (canPlace(bx, by)) set(tiles, bx, by, Tile.Tree);
+    } else if (kind2 === "tower") {
+      if (canPlace(bx, by) && canPlace(bx, by + 1) && canPlace(bx, by + 2) && canPlace(bx, by + 3)) {
+        set(tiles, bx, by, Tile.TowerTop);
+        set(tiles, bx, by + 1, Tile.TowerGlass);
+        set(tiles, bx, by + 2, Tile.TowerGlass);
+        set(tiles, bx, by + 3, Tile.TowerWall);
+      }
+    }
+  }
+
   // Diplomacy made visible: mutually friendly villages get a road between their
   // gates. Roads never cut through a village plot — a fence stays a fence.
   const inAnyPlot = (x: number, y: number): boolean => villages.some((v) => villageContains(v, x, y));

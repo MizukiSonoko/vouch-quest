@@ -1230,6 +1230,49 @@ const JUNK_KINDS = new Set(["kuzutetsu", "nisegane", "garakuta"]);
 
 /** けいじばん — town notices, including the wanted poster earned by real crimes. */
 /** いらいのふだ: what the world is asking of you RIGHT NOW, derived live. */
+/** けんちく: mint a coordinate-deed item — the map builds it for everyone. */
+const BUILD_COSTS: Readonly<Record<string, { label: string; fee: number }>> = {
+  house: { label: "いえ (2x2)", fee: 15 },
+  shop: { label: "みせ (やたい)", fee: 10 },
+  garden: { label: "はなばたけ (2x2)", fee: 3 },
+  tree: { label: "き (うえる)", fee: 2 },
+  tower: { label: "とう (4かいだて)", fee: 40 },
+};
+const BUILDABLE_TILES: ReadonlySet<Tile> = new Set([Tile.Grass, Tile.Grass2, Tile.Flower, Tile.Sand, Tile.Snow, Tile.Swamp, Tile.Path]);
+
+function buildMenu(): void {
+  if (!map || !snapshot) return;
+  const me = heroAgent();
+  if (!me) {
+    ui.push(new Info("けんちく", ["まずは どこかの むらに すもう。", "「むらを たてる」か やくばで ひっこしを。"], () => ui.pop()));
+    return;
+  }
+  const fx = player.x + player.dx;
+  const fy = player.y + player.dy;
+  const hostVillage = map.villages.find((v) => villageContains(v, fx, fy));
+  if (hostVillage && hostVillage.regionId !== me.region && snapshot.regions.find((r) => r.id === hostVillage.regionId)?.owner !== snapshot.me.heroName) {
+    ui.push(new Info("けんちく", ["ここは よその むらの とちだ。", "じぶんの むらか、あれのに たてよう。"], () => ui.pop()));
+    return;
+  }
+  if (!BUILDABLE_TILES.has(tileAt(map, fx, fy))) {
+    ui.push(new Info("けんちく", ["めのまえの じめんには たてられない。", "くさちや すなちに むかって たてよう。"], () => ui.pop()));
+    return;
+  }
+  const gold = me.balances.currency;
+  ui.push(
+    new Menu(`めのまえ (${fx},${fy})に なにを たてる? (もちがね ${gold}G)`, [
+      ...Object.entries(BUILD_COSTS).map(([k, v]) => ({ label: `${v.label} — ${v.fee}G`, value: k, disabled: gold < v.fee })),
+      { label: "やめる", value: "cancel" },
+    ], (k) => {
+      const cost = BUILD_COSTS[k];
+      if (!cost) return ui.clear();
+      void runAct({ kind: "build", structure: k, x: fx, y: fy, fee: cost.fee }, `${cost.label}を たてる`).then(() => {
+        extraExtra("けんちく かんりょう! せかいの ちずに きざまれた!");
+      });
+    }, () => ui.clear()),
+  );
+}
+
 function requestBoard(): string[] {
   if (!snapshot) return ["よみこみちゅう…"];
   const lines: string[] = [];
@@ -1505,6 +1548,7 @@ function fieldMenu(): void {
         { label: "いらいのふだ (いま できること)", value: "requests" },
         { label: "どうぐ", value: "items" },
         { label: "ものづくり (ならったわざ)", value: "craft" },
+        { label: "けんちく (めのまえに たてる)", value: "build" },
         { label: "こどもを むかえる", value: "child" },
         { label: "ちず (M)", value: "map" },
         { label: "むらを たてる", value: "found" },
@@ -1563,6 +1607,8 @@ function fieldMenu(): void {
               }, () => ui.clear()),
             );
           }
+        } else if (value === "build") {
+          buildMenu();
         } else if (value === "child") {
           const me = heroAgent();
           const married = me ? weddingBook.isMarried(me.id) : false;
@@ -2167,7 +2213,7 @@ window.addEventListener("keydown", (e) => {
       "どうぐや: かいもの  びょういん / えき(ちかつうろ) / くうこう / こうかせん",
       "",
       "― じぶんの じんせい ―",
-      "むらを たてる / ものづくり(ならったわざ) / こどもを むかえる / どうぐを つかう",
+      "むらを たてる / けんちく(いえ・みせ・とう を たてる) / ものづくり / こどもを むかえる",
     ], () => ui.clear()));
     return;
   }
