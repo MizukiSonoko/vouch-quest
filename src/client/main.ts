@@ -350,9 +350,18 @@ function celebrate(): void {
         break;
       }
       case "economy.settled": {
-        const entries = (p["entries"] as { agentId?: string }[] | undefined) ?? [];
+        const entries = (p["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
         const at = villageCenterPx(regionOfAgent(entries[0]?.agentId ?? null));
         if (at) particles.sparkle(at[0], at[1], "#ffd75e");
+        // A big gift straight into a treasury throws a festival (きふ culture).
+        const gift = entries.find((x) => x.agentId?.startsWith("treasury@") && (x.currencyDelta ?? 0) >= 50);
+        const giver = entries.find((x) => (x.currencyDelta ?? 0) < 0 && !x.agentId?.startsWith("treasury@"));
+        if (gift?.agentId && giver) {
+          const rid2 = gift.agentId.split("@")[1] ?? "";
+          const v2 = map?.villages.find((x) => x.regionId === rid2);
+          festivals.set(rid2, now + 120_000);
+          extraExtra(`ごうがい! ${v2?.displayName ?? rid2}に おおきな きふ! むらは おまつりだ!`);
+        }
         break;
       }
       case "agent.vouched": {
@@ -899,6 +908,7 @@ function hallMenu(village: Village): void {
       { label: "むらの じょうほう", value: "info" },
       { label: "むらの きろく (いれいひ)", value: "memorial" },
       { label: region.salePrice !== null ? `この むらを かいとる (${region.salePrice}G)` : "かいとる (うりに でていない)", value: "buy", disabled: region.salePrice === null || ctx.isOwner || !heroAgent() },
+      { label: "むらづくりに きふする", value: "donate", disabled: heroAgent()?.region !== region.id },
       { label: "ふどうさん (うる・ゆずる・たたむ)", value: "estate", disabled: !ctx.isOwner },
       { label: ctx.isCouncil ? "ぜいせい (さいばんしょで ていあん)" : "ぜいせいを あらためる", value: "tax", disabled: !ctx.isOwner || ctx.isCouncil },
       { label: "しさつする (まなび)", value: "inspect", disabled: ctx.livesHere },
@@ -916,7 +926,32 @@ function hallMenu(village: Village): void {
       },
       { label: "やめる", value: "cancel" },
     ], (value) => {
-      if (value === "buy") {
+      if (value === "donate") {
+        const treasury = snapshot?.agents.find((a2) => a2.id === `treasury@${region.id}`)?.balances.currency ?? 0;
+        const v = map?.villages.find((x) => x.regionId === region.id);
+        const tier = v?.tier ?? 0;
+        const nextGold = tier === 0 ? 25 : tier === 1 ? 80 : tier === 2 ? 200 : null;
+        ui.push(
+          new Menu(
+            `きんこ ${treasury}G ${nextGold !== null ? `— あと${Math.max(0, nextGold - treasury)}Gで ${municipalRank(tier + 1)}` : "— さいこうの はってんだ"}`,
+            [
+              { label: "10G きふする", value: "10" },
+              { label: "25G きふする", value: "25" },
+              { label: "50G きふする (おまつりつき)", value: "50" },
+              { label: "100G きふする (おまつりつき)", value: "100" },
+              { label: "やめる", value: "cancel" },
+            ],
+            (v2) => {
+              if (v2 !== "cancel") {
+                void runAct({ kind: "transfer", to: `treasury@${region.id}`, amount: Number(v2) }, `${region.displayName}に きふする`).then(() => {
+                  log.push("きふが きんこに おさめられた。むらの みらいが ちかづく…");
+                });
+              } else ui.clear();
+            },
+            () => ui.clear(),
+          ),
+        );
+      } else if (value === "buy") {
         const ownerAgent = snapshot?.agents.find((a2) => region.owner && a2.id.startsWith(`${region.owner}@`) && a2.role !== "treasury");
         const price = region.salePrice ?? 0;
         if (!ownerAgent) {
@@ -1194,6 +1229,68 @@ function diplomacyMenu(ctx2: VillageContext): void {
 const JUNK_KINDS = new Set(["kuzutetsu", "nisegane", "garakuta"]);
 
 /** けいじばん — town notices, including the wanted poster earned by real crimes. */
+/** いらいのふだ: what the world is asking of you RIGHT NOW, derived live. */
+function requestBoard(): string[] {
+  if (!snapshot) return ["よみこみちゅう…"];
+  const lines: string[] = [];
+  const hero = heroAgent();
+
+  const sick = snapshot.items
+    .filter((i) => i.kind === BYOKI)
+    .map((i) => snapshot?.agents.find((a2) => a2.id === i.owner))
+    .filter((a2): a2 is AgentView => !!a2 && !isDead(a2.region))
+    .slice(0, 3);
+  for (const a2 of sick) lines.push(`◆ ${a2.id}が びょうきだ。やくそうで おみまいを (おれいあり)`);
+
+  for (const r of snapshot.regions) {
+    if (r.openProposal) lines.push(`◆ ${r.displayName}で ひょうけつちゅう:【${lawLayer(String((r.openProposal.change as Record<string, unknown> | undefined)?.["policy"] ?? ""))}】${lawText(r.openProposal.change)}`);
+  }
+
+  for (const r of snapshot.regions) {
+    if (r.salePrice !== null && r.owner !== snapshot.me.heroName) lines.push(`◆ ${r.displayName}が ${r.salePrice}Gで うりだしちゅう — やくばで かいとれる`);
+  }
+
+  if (hero) {
+    const inbound = new Set<string>();
+    const answered = new Set<string>();
+    for (const e of allEvents) {
+      if (e.type !== "agent.vouched") continue;
+      if (e.payload["to"] === hero.id && typeof e.payload["from"] === "string") inbound.add(e.payload["from"] as string);
+      if (e.payload["from"] === hero.id && typeof e.payload["to"] === "string") answered.add(e.payload["to"] as string);
+    }
+    for (const from of [...inbound].filter((f) => !answered.has(f)).slice(0, 3)) {
+      lines.push(`◆ ${from}から しんらいが とどいている。こたえて あげよう?`);
+    }
+  }
+
+  const wishers = [...snapshot.agents]
+    .filter((a2) => (a2.role === "merchant" || a2.role === "broker") && !isDead(a2.region))
+    .sort((p1, p2) => p2.balances.currency - p1.balances.currency)
+    .slice(0, 3);
+  for (const a2 of wishers) {
+    const want = wantOf(a2);
+    if (want) lines.push(`◆ ${a2.id}が ${want.name}を さがしている (とどければ だいきん+おれい)`);
+  }
+
+  for (const v of map?.villages ?? []) {
+    if (v.tier >= 1 && !v.powered) lines.push(`◆ ${v.displayName}は まだ みでんか。きんこが そだてば はつでんしょが たつ`);
+  }
+
+  if (hero) {
+    const myRegion = snapshot.regions.find((r) => r.id === hero.region);
+    const treasury = snapshot.agents.find((a2) => a2.id === `treasury@${hero.region}`)?.balances.currency ?? 0;
+    const residents = snapshot.agents.filter((a2) => a2.region === hero.region && a2.role !== "treasury").length;
+    const tier = map?.villages.find((v) => v.regionId === hero.region)?.tier ?? 0;
+    const nextGold = tier === 0 ? 25 : tier === 1 ? 80 : tier === 2 ? 200 : null;
+    if (myRegion && nextGold !== null && treasury < nextGold) {
+      lines.push(`◆ ${myRegion.displayName}の きんこは ${treasury}G。あと${nextGold - treasury}Gの きふで ${municipalRank(tier + 1)}に はってんする!`);
+    }
+    void residents;
+  }
+
+  return lines.length > 0 ? lines.slice(0, 14) : ["いまは とくに いらいは ない。へいわだ。"];
+}
+
 function posterMenu(village: Village): void {
   let junk = 0;
   let borrowed = 0;
@@ -1405,6 +1502,7 @@ function fieldMenu(): void {
       [
         { label: "つよさ", value: "status" },
         { label: "クエスト", value: "quests" },
+        { label: "いらいのふだ (いま できること)", value: "requests" },
         { label: "どうぐ", value: "items" },
         { label: "ものづくり (ならったわざ)", value: "craft" },
         { label: "こどもを むかえる", value: "child" },
@@ -1491,6 +1589,8 @@ function fieldMenu(): void {
               }, () => ui.clear()),
             );
           }
+        } else if (value === "requests") {
+          ui.push(new Info("いらいのふだ — いま せかいが もとめていること", requestBoard(), () => ui.pop()));
         } else if (value === "quests") {
           questJournal();
         } else if (value === "map") {
@@ -2048,6 +2148,32 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "l" || e.key === "L") {
     se("confirm");
     ui.push(new LogViewer());
+    return;
+  }
+  if (e.key === "h" || e.key === "H") {
+    se("confirm");
+    ui.push(new Info("たすけ — できることの すべて", [
+      "やじるしキー: あるく (Shift: ダッシュ)  Enter: はなす/しらべる",
+      "E: けいざいしんぶん  M: ちず  L: せかいのログ  Q: いらいのふだ  H: このヘルプ",
+      "",
+      "― ひととの かかわり ―",
+      "はなす / みのうえを きく / ゴールドや どうぐを わたす / ほしょうする",
+      "こくはくする (りょうおもいで けっこんしき) / おみまい / でしいり / ほしいものを きく",
+      "",
+      "― むらの いとなみ ―",
+      "やくば: じょうほう・きろく(いれいひ)・きふ(むらが はってんする)・いじゅう",
+      "ふどうさん: むらを うる/かう/ゆずる/たたむ  ぜいせい: ぜいりつの あらため",
+      "さいばんしょ: ていあんと とうひょう / ろっぽうぜんしょ  ぞうへいきょく: どうぐづくり",
+      "どうぐや: かいもの  びょういん / えき(ちかつうろ) / くうこう / こうかせん",
+      "",
+      "― じぶんの じんせい ―",
+      "むらを たてる / ものづくり(ならったわざ) / こどもを むかえる / どうぐを つかう",
+    ], () => ui.clear()));
+    return;
+  }
+  if (e.key === "q" || e.key === "Q") {
+    se("confirm");
+    ui.push(new Info("いらいのふだ — いま せかいが もとめていること", requestBoard(), () => ui.clear()));
     return;
   }
   if (e.key === "e" || e.key === "E") {
