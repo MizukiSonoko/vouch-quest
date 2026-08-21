@@ -588,6 +588,9 @@ function wantOf(agent: AgentView): Ware | null {
 /** たいまつ: a lit torch pushes back the night around the hero for a while. */
 let torchUntil = 0;
 const petTrail = { x: 0, y: 0 };
+/** ぼうえんきょう: a borrowed viewpoint — look at a far village without moving. */
+let spy: { x: number; y: number; until: number } | null = null;
+let heroEmote: { text: string; until: number } | null = null;
 
 /** A wedding in progress: the couple and guests gather at the town hall. */
 let wedding: { a: string; b: string; village: Village; until: number } | null = null;
@@ -604,6 +607,33 @@ function useItem(item: ItemView): void {
     let h = 0;
     for (let i = 0; i < item.id.length; i++) h = (Math.imul(h, 31) + item.id.charCodeAt(i)) | 0;
     ui.push(new Info("つぼうらない", ["つぼに みみを あてると こえが きこえた…", `「${OMIKUJI[Math.abs(h) % OMIKUJI.length]}」`], () => ui.clear()));
+  } else if (item.kind === "hanabi") {
+    for (let k = 0; k < 6; k++) {
+      setTimeout(() => particles.firework(player.x - 3 + Math.floor(Math.random() * 7), player.y - 3 - Math.floor(Math.random() * 3)), k * 350);
+    }
+    se("fanfare");
+    log.push("よぞらに おおきな はなが さいた!");
+    ui.clear();
+  } else if (item.kind === "gakki") {
+    particles.sparkle(player.px + CELL / 2, player.py - 8, "#ffd75e");
+    se("fanfare");
+    log.push("♪ ひとふし かなでた。とおりすがりの ひとが ほほえんだ。");
+    ui.clear();
+  } else if (["bread", "fish", "sakana", "yasai", "wagashi", "tea", "amazake"].includes(item.kind.replace(/\d+$/, ""))) {
+    const home = snapshot?.me.agentId?.split("@")[1];
+    ui.push(
+      new Menu(`${kindName(item.kind)}を たべる? (たべたら なくなる)`, [
+        { label: "たべる", value: "eat" },
+        { label: "やめる", value: "cancel" },
+      ], (v) => {
+        if (v === "eat" && home) {
+          void runAct({ kind: "transferItem", itemId: item.id, to: `treasury@${home}` }, "いただきます").then(() => {
+            particles.sparkle(player.px + CELL / 2, player.py, "#a5ff8a");
+            log.push(`${kindName(item.kind)}を たべた。おいしかった! ちからが わいてくる。`);
+          });
+        } else ui.clear();
+      }, () => ui.clear()),
+    );
   } else if (item.kind === "herb") {
     ui.push(new Info("やくそう", ["いま つかうほど つかれていない。", "びょうきの ひとに 「おみまい」で とどけると よろこばれる。"], () => ui.clear()));
   } else {
@@ -1324,12 +1354,28 @@ const VERBS: readonly string[] = [
   "むらづくりに きふする", "むらを うりにだす", "むらを かいとる", "むらを ゆずる", "むらを たたむ/ひらく",
   "けんちくする", "けんりしょを ゆずる", "けいざいしんぶんを よむ", "いらいのふだを みる", "せかいのログを よむ",
   "ちずを みる", "でんぱとうに のぼる", "おおがたビジョンを みる", "いれいひに もうでる", "おまつりを おこす",
+  "しゃしんをとる (P)", "ぼうえんきょうで のぞく (T)", "にっきを かく (N)", "にっきを よみかえす",
+  "おじぎする (1)", "ばんざいする (2)", "ハートを おくる (3)", "はなびを あげる", "がっきを かなでる", "ごはんを たべる",
+];
+
+/** 機能: the SYSTEMS that run this world, named and counted. */
+const FEATURES: readonly string[] = [
+  "イベントソーシング (ぜんりれき さいせい)", "しょめいつきコマンド (Ed25519)", "つうかほぞんそく", "ノンカストディアル (かぎは ブラウザ)",
+  "ゲノムじどうしんか (LLM)", "とつぜんへんい (でんせつ・りゅうこう・ぜんちょう)", "LLMうまれの しょくぎょう", "ギルドむらの けんこく",
+  "けっこんしき", "しゅっさん", "びょうきと かいふく", "ろうすいと あのよ", "いれいひ", "みのうえばなし (ログでんき)",
+  "7つの せいじたいせい", "ぎかいと とうひょう", "けんぽう・ほうりつ・じょうれい の 3そう", "ぜいせい", "がいこうスタンス", "しょうにんゲート",
+  "しちょうそんせいど (むらのなかのむら)", "けん (ゆうこうれんごう)", "とし はってん 4だんかい", "がっぺいと ほうがん", "メガシティ (ちずの2/3)",
+  "がいろグリッドと くかく", "ちゅうおうひろば", "スクランブルこうさてん", "ネオンがい", "おおがたビジョン (ほんもののニュース)",
+  "でんぱとう", "セントラルパーク", "こうかてつどう (ななめ)", "ちかどう", "くうこうと ひこうき", "はつでんしょと そうでんもう",
+  "しがいのくるま", "きしゃ (かいてんスプライト)", "てんきと きせつかん", "ひるとよる", "バイオーム 5しゅ", "やせいどうぶつ",
+  "ぎんこう よきん・ゆうし", "ふどうさんエスクロー", "のうひんけいざい", "おひねりけいざい", "たからのじだい", "けいざいしんぶん (ジニけいすう)",
+  "かわらばんティッカー", "ごうがい", "クエストと しょうごう", "できることずかん",
 ];
 
 function compendium(): void {
   const catalog = getBuildings();
   const wares = allWares();
-  const total = VERBS.length + Object.keys(catalog).length + wares.length + genomeProfs.size;
+  const total = VERBS.length + Object.keys(catalog).length + wares.length + genomeProfs.size + FEATURES.length;
   const lines: string[] = [];
   lines.push(`― こうどう ${VERBS.length}こ ―`);
   VERBS.forEach((v, i) => lines.push(` ${i + 1}. ${v}`));
@@ -1339,6 +1385,9 @@ function compendium(): void {
   lines.push("");
   lines.push(`― しなもの ${wares.length}しゅ / しんかの しょくぎょう ${genomeProfs.size}しゅ ―`);
   wares.forEach((w2, i) => lines.push(` ${VERBS.length + Object.keys(catalog).length + i + 1}. ${w2.name} (${w2.price}G)`));
+  lines.push("");
+  lines.push(`― せかいの きのう ${FEATURES.length}こ ―`);
+  FEATURES.forEach((f2, i) => lines.push(` ${VERBS.length + Object.keys(catalog).length + wares.length + i + 1}. ${f2}`));
   ui.push(new Info(`できることずかん — ぜんぶで ${total}こ (しんかで まいにち ふえる)`, lines, () => ui.clear()));
 }
 
@@ -2333,6 +2382,66 @@ window.addEventListener("keydown", (e) => {
     ], () => ui.clear()));
     return;
   }
+  if (e.key === "p" || e.key === "P") {
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `vouchquest-${snapshot?.logLength ?? 0}.png`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+    log.push("パシャ! せかいの いまを しゃしんに おさめた。");
+    se("confirm");
+    return;
+  }
+  if (e.key === "t" || e.key === "T") {
+    se("confirm");
+    ui.push(
+      new Menu("ぼうえんきょう — どこを のぞく?", [
+        ...(map?.villages ?? []).slice(0, 12).map((v) => ({ label: `${v.displayName}${municipalRank(v.tier)}`, value: v.regionId })),
+        { label: "やめる", value: "cancel" },
+      ], (rid) => {
+        const v = map?.villages.find((x) => x.regionId === rid);
+        if (v) {
+          spy = { x: v.x + Math.floor(v.w / 2), y: v.y + Math.floor(v.h / 2), until: performance.now() + 6000 };
+          log.push(`ぼうえんきょうで ${v.displayName}を のぞいた… (6びょうかん)`);
+        }
+        ui.clear();
+      }, () => ui.clear()),
+    );
+    return;
+  }
+  if (e.key === "n" || e.key === "N") {
+    se("confirm");
+    const notes = JSON.parse(localStorage.getItem("vouchquest.diary") ?? "[]") as string[];
+    ui.push(
+      new Menu("たびのにっき", [
+        { label: "きょうの ひとことを かく", value: "write" },
+        { label: `よみかえす (${notes.length}ページ)`, value: "read", disabled: notes.length === 0 },
+        { label: "とじる", value: "cancel" },
+      ], (v) => {
+        if (v === "write") {
+          ui.push(new TextInput("にっきに なんと かく?", { maxLen: 40 }, (text) => {
+            const list = JSON.parse(localStorage.getItem("vouchquest.diary") ?? "[]") as string[];
+            list.push(`できごと${snapshot?.logLength ?? 0}: ${text}`);
+            localStorage.setItem("vouchquest.diary", JSON.stringify(list.slice(-60)));
+            log.push("にっきに かきこんだ。");
+            ui.clear();
+          }, () => ui.clear()));
+        } else if (v === "read") {
+          ui.push(new Info("たびのにっき", notes.slice(-20), () => ui.clear()));
+        } else ui.clear();
+      }, () => ui.clear()),
+    );
+    return;
+  }
+  if (e.key === "1" || e.key === "2" || e.key === "3") {
+    const emote = e.key === "1" ? "ぺこり" : e.key === "2" ? "ばんざーい!" : "♥";
+    heroEmote = { text: emote, until: performance.now() + 2200 };
+    se("cursor");
+    return;
+  }
   if (e.key === "c" || e.key === "C") {
     se("confirm");
     compendium();
@@ -2738,8 +2847,10 @@ function render(): void {
   }
 
   const shake = performance.now() < shakeUntil ? 5 : 0;
-  const camX = Math.max(0, Math.min(player.px - w / 2 + CELL / 2, MAP_W * CELL - w)) + (Math.random() - 0.5) * shake;
-  const camY = Math.max(0, Math.min(player.py - h / 2 + CELL / 2, MAP_H * CELL - h)) + (Math.random() - 0.5) * shake;
+  const focus = spy && performance.now() < spy.until ? { px: spy.x * CELL, py: spy.y * CELL } : { px: player.px, py: player.py };
+  if (spy && performance.now() >= spy.until) spy = null;
+  const camX = Math.max(0, Math.min(focus.px - w / 2 + CELL / 2, MAP_W * CELL - w)) + (Math.random() - 0.5) * shake;
+  const camY = Math.max(0, Math.min(focus.py - h / 2 + CELL / 2, MAP_H * CELL - h)) + (Math.random() - 0.5) * shake;
   camXg = camX;
   camYg = camY;
   const x0 = Math.floor(camX / CELL);
@@ -2966,6 +3077,13 @@ function render(): void {
 
   const heroPair = sprites.heroFor(titleTier(title));
   ctx.drawImage(heroPair[player.frame === 0 ? 0 : 1], player.px - camX, player.py - camY);
+
+  if (heroEmote && performance.now() < heroEmote.until) {
+    ctx.font = '16px "DotGothic16", monospace';
+    const ew = ctx.measureText(heroEmote.text).width;
+    drawWindow(ctx, player.px - camX + CELL / 2 - ew / 2 - 8, player.py - camY - 34, ew + 16, 28);
+    drawText(ctx, heroEmote.text, player.px - camX + CELL / 2 - ew / 2, player.py - camY - 28, "#ffd75e");
+  } else if (heroEmote) heroEmote = null;
 
   // A pet pads along behind its keeper (the deed is a real item; the walk is love).
   const pet = myItems().find((i) => i.kind.startsWith("pet"));

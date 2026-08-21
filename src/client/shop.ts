@@ -23,6 +23,8 @@ export const CATALOG: readonly Ware[] = [
   { kind: "crown", name: "おうかん", price: 150, blurb: "そんちょうの けんい。" },
   { kind: "petslime", name: "ペットスライム", price: 30, blurb: "ぷるぷるが ついてくる。" },
   { kind: "petusagi", name: "こうさぎ", price: 35, blurb: "ぴょこぴょこと あとを ゆく。" },
+  { kind: "hanabi", name: "はなびセット", price: 18, blurb: "よぞらに おおきな はなを さかせる。" },
+  { kind: "gakki", name: "たびのがっき", price: 22, blurb: "ひとふし かなでれば こころ おどる。" },
 ];
 
 export function wareByKind(kind: string): Ware | null {
