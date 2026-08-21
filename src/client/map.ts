@@ -69,6 +69,11 @@ export const enum Tile {
   RoadElevated = 50,
   RailElevatedNE = 51,
   RailElevatedSE = 52,
+  Neon = 53,
+  Billboard = 54,
+  Crossing = 55,
+  TowerRedTop = 56,
+  TowerRedMid = 57,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -112,6 +117,10 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.TowerWall,
   Tile.TowerGlass,
   Tile.TowerTop,
+  Tile.Neon,
+  Tile.Billboard,
+  Tile.TowerRedTop,
+  Tile.TowerRedMid,
 ]);
 
 /** Village slot origins (top-left), an 8x7 lattice spaced for the largest plot (34x34). */
@@ -140,6 +149,8 @@ export interface Village {
   powered: boolean;
   /** Municipal nesting: the city whose territory contains this settlement's centre (むらの中のむら). */
   parent: string | null;
+  /** Paved street polylines inside the settlement — the traffic runs on these. */
+  readonly streets: readonly (readonly (readonly [number, number])[])[];
   readonly x: number;
   readonly y: number;
   readonly w: number;
@@ -377,21 +388,74 @@ function carveVillage(
     set(tiles, x, y, streetTile);
     protectedCells.add(key(x, y));
   };
-  // The main avenue: gate straight up through town.
+  // The main avenue: gate straight up through town. Streets are remembered as
+  // polylines so the metropolis can run taxis along them.
+  const streets: (readonly [number, number])[][] = [];
+  const rememberV = (x: number, y0: number, y1: number): void => {
+    streets.push(Array.from({ length: Math.max(0, y1 - y0 + 1) }, (_, k) => [x, y0 + k] as const));
+  };
+  const rememberH = (y: number, x0: number, x1: number): void => {
+    streets.push(Array.from({ length: Math.max(0, x1 - x0 + 1) }, (_, k) => [x0 + k, y] as const));
+  };
   for (let y = vy + 1; y <= gy; y++) layStreet(gx, y);
+  rememberV(gx, vy + 1, gy);
   const midY = vy + Math.floor(h / 2);
   if (tier >= 1) {
     for (let x = vx + 1; x < vx + w - 1; x++) layStreet(x, midY);
+    rememberH(midY, vx + 1, vx + w - 2);
   }
+  const aveL = vx + Math.floor(w / 4);
+  const aveR = vx + Math.floor((w * 3) / 4);
+  const stN = vy + Math.floor(h / 4);
   if (tier >= 2) {
-    const aveL = vx + Math.floor(w / 4);
-    const aveR = vx + Math.floor((w * 3) / 4);
     for (let y = vy + 1; y < vy + h - 1; y++) {
       layStreet(aveL, y);
       if (tier >= 3) layStreet(aveR, y);
     }
-    const stN = vy + Math.floor(h / 4);
+    rememberV(aveL, vy + 1, vy + h - 2);
+    if (tier >= 3) rememberV(aveR, vy + 1, vy + h - 2);
     for (let x = vx + 1; x < vx + w - 1; x++) layStreet(x, stN);
+    rememberH(stN, vx + 1, vx + w - 2);
+  }
+  // スクランブル交差点: the great crossings where avenues meet.
+  if (tier >= 3) {
+    for (const [cx2, cy2] of [
+      [aveL, midY], [aveR, midY], [aveL, stN], [aveR, stN], [gx, stN],
+    ] as const) {
+      for (const [ddx, ddy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+        if (inside(cx2 + ddx, cy2 + ddy)) {
+          set(tiles, cx2 + ddx, cy2 + ddy, Tile.Crossing);
+          protectedCells.add(key(cx2 + ddx, cy2 + ddy));
+        }
+      }
+    }
+  }
+  // セントラルパーク: the metropolis keeps one rectangle of green.
+  if (tier >= 3 && w >= 30 && h >= 20) {
+    const pw = Math.min(10, Math.floor(w / 4));
+    const ph = Math.min(7, Math.floor(h / 4));
+    const px0 = vx + Math.floor(w * 0.62);
+    const py0 = vy + Math.floor(h * 0.58);
+    for (let y = py0; y < py0 + ph; y++) {
+      for (let x = px0; x < px0 + pw; x++) {
+        if (!inside(x, y)) continue;
+        const edge = x === px0 || y === py0 || x === px0 + pw - 1 || y === py0 + ph - 1;
+        const pond = x >= px0 + 2 && x <= px0 + 4 && y >= py0 + 2 && y <= py0 + 3;
+        set(tiles, x, y, pond ? Tile.Water : edge && (x + y) % 3 === 0 ? Tile.Tree : (x + y) % 5 === 0 ? Tile.Flower : Tile.Grass);
+        protectedCells.add(key(x, y));
+      }
+    }
+  }
+  // ランドマーク電波塔: red-and-white above the plaza district, lit at night.
+  if (tier >= 3) {
+    const lx = gx + 5;
+    const ly0 = midY - 5;
+    if (inside(lx, ly0) && inside(lx, ly0 + 1) && !protectedCells.has(key(lx, ly0)) && !protectedCells.has(key(lx, ly0 + 1))) {
+      set(tiles, lx, ly0, Tile.TowerRedTop);
+      set(tiles, lx, ly0 + 1, Tile.TowerRedMid);
+      protectedCells.add(key(lx, ly0));
+      protectedCells.add(key(lx, ly0 + 1));
+    }
   }
   // The plaza: an open square on the avenue where the town gathers.
   if (tier >= 1) {
@@ -597,6 +661,25 @@ function carveVillage(
     }
   }
 
+  // 歓楽街: street-facing skyscraper walls light up as neon; one becomes the
+  // city's giant news screen (the billboard shows the real かわらばん).
+  if (tier >= 3) {
+    let billboardPlaced = false;
+    for (const packed of cells) {
+      const y = Math.floor(packed / MAP_W);
+      const x = packed % MAP_W;
+      if (get(tiles, x, y) !== Tile.TowerWall) continue;
+      const below = get(tiles, x, y + 1);
+      if (below !== Tile.Pavement && below !== Tile.Crossing) continue;
+      if (!billboardPlaced) {
+        set(tiles, x, y, Tile.Billboard);
+        billboardPlaced = true;
+      } else if (rng() < 0.45) {
+        set(tiles, x, y, Tile.Neon);
+      }
+    }
+  }
+
   // Keep only doors that survived later construction, and clear each doorstep.
   const spots: (readonly [number, number])[] = [];
   const homes: (readonly [number, number])[] = [];
@@ -754,7 +837,7 @@ function carveVillage(
     if (pt) globalProtected.add(pt[1] * MAP_W + pt[0]);
   }
 
-  return { x: vx, y: vy, w, h, biome, cells, tier, station, airport, plant, substation, powered: false, parent: null as string | null, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, hospital, spots, homes };
+  return { x: vx, y: vy, w, h, biome, cells, tier, station, airport, plant, substation, powered: false, parent: null as string | null, streets, gate: [gx, gy] as const, sign, poster, chest, stall, hall, mint, court, hospital, spots, homes };
 }
 
 export function buildMap(snapshot: Snapshot): WorldMap {

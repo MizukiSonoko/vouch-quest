@@ -1746,6 +1746,16 @@ function interact(): void {
     );
     return;
   }
+  if (tile === Tile.TowerRedTop || tile === Tile.TowerRedMid) {
+    const village = map.villages.find((v) => villageContains(v, fx, fy));
+    ui.push(new Info(`${village?.displayName ?? "まち"}タワー`, [
+      "あかと しろの でんぱとうが そびえている。",
+      "よるには こうくうとうが ちかちかと ひかる。",
+      `てんぼうだいから ${village?.displayName ?? "まち"}の ぜんけいが みえた!`,
+      `じんこう ${snapshot.agents.filter((a2) => a2.region === village?.regionId && a2.role !== "treasury").length}にん の だいとかいだ。`,
+    ], () => ui.pop()));
+    return;
+  }
   if (tile === Tile.TowerWall || tile === Tile.TowerGlass) {
     let ty = fy;
     while (ty > 0 && (tileAt(map, fx, ty) === Tile.TowerWall || tileAt(map, fx, ty) === Tile.TowerGlass)) ty--;
@@ -1958,6 +1968,11 @@ const MINI_COLORS: Record<number, string> = {
   [Tile.RoadElevated]: "#9a9aa2",
   [Tile.RailElevatedNE]: "#8a7a60",
   [Tile.RailElevatedSE]: "#8a7a60",
+  [Tile.Neon]: "#e87aa0",
+  [Tile.Billboard]: "#143c92",
+  [Tile.Crossing]: "#c8c8d0",
+  [Tile.TowerRedTop]: "#d9553f",
+  [Tile.TowerRedMid]: "#d9553f",
 };
 const MINI_SCALE = 2;
 let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;
@@ -2550,6 +2565,62 @@ function renderLayer(camX: number, camY: number, w: number, h: number): void {
   drawText(ctx, label, 16, h - 96, "#8fd0ff");
 }
 
+/** Taxis and sedans shuttle the metropolis avenues, rotated to their street. */
+function drawCars(camX: number, camY: number): void {
+  if (!ctx || !map) return;
+  for (const village of map.villages) {
+    if (village.tier < 3) continue;
+    village.streets.forEach((street, si) => {
+      if (street.length < 8) return;
+      const span = street.length - 1;
+      const carCount = Math.min(3, 1 + (si % 3));
+      for (let ci = 0; ci < carCount; ci++) {
+        const speed = 90 + ((si * 37 + ci * 53) % 60);
+        const t = Math.floor(performance.now() / speed + ci * span / carCount) % (span * 2);
+        const idx = t <= span ? t : span * 2 - t;
+        const pt = street[idx];
+        if (!pt) continue;
+        const ahead = street[Math.min(span, idx + 1)] ?? pt;
+        const behind = street[Math.max(0, idx - 1)] ?? pt;
+        const ang = Math.atan2(ahead[1] - behind[1], ahead[0] - behind[0]) + (t <= span ? 0 : Math.PI);
+        const sprite = sprites.cars[(si + ci) % sprites.cars.length];
+        if (!sprite) continue;
+        ctx.save();
+        ctx.translate(pt[0] * CELL - camX + CELL / 2, pt[1] * CELL - camY + CELL / 2);
+        ctx.rotate(ang);
+        ctx.drawImage(sprite, -CELL / 2, -CELL / 2);
+        ctx.restore();
+      }
+    });
+  }
+}
+
+/** 大型ビジョン: the city's giant screens run the REAL news ticker. */
+function drawBillboards(camX: number, camY: number): void {
+  if (!ctx || !map) return;
+  const x0 = Math.floor(camX / CELL);
+  const y0 = Math.floor(camY / CELL);
+  const text = tickerText || "vouch quest";
+  for (let y = y0; y <= y0 + Math.ceil(canvas.height / CELL); y++) {
+    for (let x = x0; x <= x0 + Math.ceil(canvas.width / CELL); x++) {
+      if (tileAt(map, x, y) !== Tile.Billboard) continue;
+      const bx = x * CELL - camX + 9;
+      const by = y * CELL - camY + 9;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(bx, by, CELL - 18, 18);
+      ctx.clip();
+      ctx.font = '13px "DotGothic16", monospace';
+      const tw = ctx.measureText(text).width + 60;
+      const off = (performance.now() / 22) % tw;
+      ctx.fillStyle = "#8ab4f2";
+      ctx.fillText(text, bx + (CELL - 18) - off, by + 2);
+      ctx.fillText(text, bx + (CELL - 18) - off + tw, by + 2);
+      ctx.restore();
+    }
+  }
+}
+
 function render(): void {
   if (!ctx) return;
   ctx.textBaseline = "top";
@@ -2577,7 +2648,7 @@ function render(): void {
       const t = tileAt(map, x, y);
       const sprite = (animFrame ? sprites.tilesAlt.get(t) : undefined) ?? sprites.tiles.get(t);
       if (sprite) ctx.drawImage(sprite, x * CELL - camX, y * CELL - camY);
-      if (t === Tile.Lamp || t === Tile.WallWindow || t === Tile.WallWoodWindow || t === Tile.TowerGlass) lights.push([x, y] as const);
+      if (t === Tile.Lamp || t === Tile.WallWindow || t === Tile.WallWoodWindow || t === Tile.TowerGlass || t === Tile.Neon || t === Tile.Billboard || t === Tile.TowerRedTop) lights.push([x, y] as const);
     }
   }
 
@@ -2721,6 +2792,8 @@ function render(): void {
   }
 
   drawTrains(camX, camY, 0);
+  drawCars(camX, camY);
+  drawBillboards(camX, camY);
 
   // Transmission lines hum between plants and substations, pylons in step.
   for (const [a, b] of map.powerLines) {
@@ -2811,9 +2884,12 @@ function render(): void {
       }
       const gx2 = lx * CELL - camX + CELL / 2;
       const gy2 = ly * CELL - camY + CELL / 2;
+      const t3 = tileAt(map, lx, ly);
+      const neonHue = t3 === Tile.Neon ? (lx * 7 + ly * 13) % 3 : -1;
+      const glowRgb = t3 === Tile.Billboard ? "138, 180, 242" : neonHue === 0 ? "232, 122, 160" : neonHue === 1 ? "138, 180, 242" : neonHue === 2 ? "255, 226, 122" : t3 === Tile.TowerRedTop ? "255, 90, 70" : "255, 214, 110";
       const grad = ctx.createRadialGradient(gx2, gy2, 4, gx2, gy2, 70);
-      grad.addColorStop(0, "rgba(255, 214, 110, 0.30)");
-      grad.addColorStop(1, "rgba(255, 214, 110, 0)");
+      grad.addColorStop(0, `rgba(${glowRgb}, 0.32)`);
+      grad.addColorStop(1, `rgba(${glowRgb}, 0)`);
       ctx.fillStyle = grad;
       ctx.fillRect(gx2 - 70, gy2 - 70, 140, 140);
     }

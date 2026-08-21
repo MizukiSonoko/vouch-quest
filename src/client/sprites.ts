@@ -985,6 +985,8 @@ export interface SpriteSet {
   readonly tilesAlt: ReadonlyMap<Tile, HTMLCanvasElement>;
   /** Rolling stock, drawn rotated along the rails. */
   readonly trains: { readonly engine: HTMLCanvasElement; readonly coach: HTMLCanvasElement };
+  /** Street cars — taxis and sedans for the metropolis avenues. */
+  readonly cars: readonly HTMLCanvasElement[];
   /** Interior furnishing sprites for the room scene. */
   readonly interior: Readonly<Record<string, HTMLCanvasElement>>;
   /** The hero pair for a title tier (0..5); built lazily and cached. */
@@ -1202,6 +1204,158 @@ const HEARTH_B = [
   "................",
 ];
 
+const NEON_A = [
+  "xKKKKKKKKKKKKKKx",
+  "xKPPPPKKAAAAKKKx",
+  "xKPyyPKKAeeAKKKx",
+  "xKPPPPKKAAAAKKKx",
+  "xKKKKKKKKKKKKKKx",
+  "xKNNNNNNKKYYYYKx",
+  "xKNiiiiNKKYyyYKx",
+  "xKNNNNNNKKYYYYKx",
+  "xKKKKKKKKKKKKKKx",
+  "xKAAKKPPPPPPKKKx",
+  "xKAeKKPyyyyPKKKx",
+  "xKAAKKPPPPPPKKKx",
+  "xKKKKKKKKKKKKKKx",
+  "xKYYYYYYYYYYYYKx",
+  "xKKKKKKKKKKKKKKx",
+  "xxxxxxxxxxxxxxxx",
+];
+
+const NEON_B = [
+  "xKKKKKKKKKKKKKKx",
+  "xKppppKKYYYYKKKx",
+  "xKpyypKKYeeYKKKx",
+  "xKppppKKYYYYKKKx",
+  "xKKKKKKKKKKKKKKx",
+  "xKiiiiiiKKAAAAKx",
+  "xKiNNNNiKKAyyAKx",
+  "xKiiiiiiKKAAAAKx",
+  "xKKKKKKKKKKKKKKx",
+  "xKYYKKppppppKKKx",
+  "xKYeKKpyyyypKKKx",
+  "xKYYKKppppppKKKx",
+  "xKKKKKKKKKKKKKKx",
+  "xKPPPPPPPPPPPPKx",
+  "xKKKKKKKKKKKKKKx",
+  "xxxxxxxxxxxxxxxx",
+];
+
+const BILLBOARD = [
+  "xxxxxxxxxxxxxxxx",
+  "xKKKKKKKKKKKKKKx",
+  "xKxxxxxxxxxxxxKx",
+  "xKxjjjjjjjjjjxKx",
+  "xKxjjjjjjjjjjxKx",
+  "xKxjjjjjjjjjjxKx",
+  "xKxjjjjjjjjjjxKx",
+  "xKxjjjjjjjjjjxKx",
+  "xKxxxxxxxxxxxxKx",
+  "xKKKKKKKKKKKKKKx",
+  "xxxxKxxxxxxKxxxx",
+  "...xKx....xKx...",
+  "...xKx....xKx...",
+  "...xxx....xxx...",
+  "................",
+  "................",
+];
+
+const CROSSING = [
+  "mmmmmmmmmmmmmmmm",
+  "eeeemmeeeemmeeee",
+  "eeeemmeeeemmeeee",
+  "mmmmmmmmmmmmmmmm",
+  "mmmmmmmmmmmmmmmm",
+  "eeeemmeeeemmeeee",
+  "eeeemmeeeemmeeee",
+  "mmmmmmmmmmmmmmmm",
+  "mmmmmmmmmmmmmmmm",
+  "eeeemmeeeemmeeee",
+  "eeeemmeeeemmeeee",
+  "mmmmmmmmmmmmmmmm",
+  "mmmmmmmmmmmmmmmm",
+  "eeeemmeeeemmeeee",
+  "eeeemmeeeemmeeee",
+  "mmmmmmmmmmmmmmmm",
+];
+
+const TOWERRED_TOP = [
+  "................",
+  ".......YY.......",
+  ".......xx.......",
+  ".......rr.......",
+  "......xrrx......",
+  "......rxxr......",
+  ".....xr..rx.....",
+  ".....re..er.....",
+  "....xr....rx....",
+  "....reeeeeer....",
+  "...xr......rx...",
+  "...r.x....x.r...",
+  "..xr..x..x..rx..",
+  "..r....xx....r..",
+  ".xr....xx....rx.",
+  ".rxxxxxxxxxxxxr.",
+];
+
+const TOWERRED_MID = [
+  ".rx....xx....xr.",
+  ".r.x...xx...x.r.",
+  "xr..x..xx..x..rx",
+  "r....x.xx.x....r",
+  "r.....xxxx.....r",
+  "reeeeeeeeeeeeeer",
+  "r.....xxxx.....r",
+  "xr...x.xx.x...rx",
+  ".r..x..xx..x..r.",
+  ".rx....xx....xr.",
+  ".r.x...xx...x.r.",
+  "xr..x..xx..x..rx",
+  "r....x.xx.x....r",
+  "r.....xxxx.....r",
+  "reeeeeeeeeeeeeer",
+  "xxxxxxxxxxxxxxxx",
+];
+
+const CAR_TAXI = [
+  "................",
+  "................",
+  "................",
+  "................",
+  "....xxxxxxx.....",
+  "...xyIIxIIyx....",
+  "..xyyyyxyyyyx...",
+  ".xyyyyyyyyyyyx..",
+  ".xKyyyyyyyyKyx..",
+  ".xxxxxxxxxxxxx..",
+  "..xKKx...xKKx...",
+  "..xKKx...xKKx...",
+  "...xx.....xx....",
+  "................",
+  "................",
+  "................",
+];
+
+const CAR_RED = [
+  "................",
+  "................",
+  "................",
+  "................",
+  "....xxxxxxx.....",
+  "...xrIIxIIrx....",
+  "..xrrrrxrrrrx...",
+  ".xrrrrrrrrrrrx..",
+  ".xKrrrrrrrrKrx..",
+  ".xxxxxxxxxxxxx..",
+  "..xKKx...xKKx...",
+  "..xKKx...xKKx...",
+  "...xx.....xx....",
+  "................",
+  "................",
+  "................",
+];
+
 export function buildSprites(): SpriteSet {
   const tiles = new Map<Tile, HTMLCanvasElement>([
     [Tile.Grass, draw(GRASS)],
@@ -1257,15 +1411,22 @@ export function buildSprites(): SpriteSet {
     [Tile.RoadElevated, draw(ROAD_ELEV)],
     [Tile.RailElevatedNE, draw(RAIL_ELEV_NE)],
     [Tile.RailElevatedSE, draw(RAIL_ELEV_SE)],
+    [Tile.Neon, draw(NEON_A)],
+    [Tile.Billboard, draw(BILLBOARD)],
+    [Tile.Crossing, draw(CROSSING)],
+    [Tile.TowerRedTop, draw(TOWERRED_TOP)],
+    [Tile.TowerRedMid, draw(TOWERRED_MID)],
   ]);
   const tilesAlt = new Map<Tile, HTMLCanvasElement>([
     [Tile.Water, draw(WATER_B)],
     [Tile.Swamp, draw(SWAMP_B)],
     [Tile.Flower, draw(FLOWER_B)],
+    [Tile.Neon, draw(NEON_B)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();
   const trains = { engine: draw(TRAIN_ENGINE), coach: draw(TRAIN_COACH) };
+  const cars = [draw(CAR_TAXI), draw(CAR_RED)] as const;
   const interior: Record<string, HTMLCanvasElement> = {
     floor: draw(FLOOR_WOOD),
     rug: draw(RUG),
@@ -1279,6 +1440,7 @@ export function buildSprites(): SpriteSet {
     tiles,
     tilesAlt,
     trains,
+    cars,
     interior,
     heroFor(tier: number) {
       const clamped = Math.max(0, Math.min(tier, HERO_LOOKS.length - 1));
