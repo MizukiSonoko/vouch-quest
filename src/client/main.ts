@@ -2905,53 +2905,184 @@ class EconomyOverlay {
 }
 
 class MapOverlay {
-  constructor(private readonly onClose: () => void) {}
+  private sel = 0;
+
+  constructor(private readonly onClose: () => void) {
+    // Start the cursor on the hero's home town.
+    const home = snapshot?.me.agentId?.split("@")[1];
+    const idx = map?.villages.findIndex((v) => v.regionId === home) ?? -1;
+    if (idx >= 0) this.sel = idx;
+  }
 
   handleKey(key: string): void {
-    if (["Escape", "Enter", " ", "m", "M", "x", "z"].includes(key)) this.onClose();
+    const towns = map?.villages ?? [];
+    if (key === "ArrowRight" || key === "ArrowDown") {
+      this.sel = (this.sel + 1) % Math.max(1, towns.length);
+      se("cursor");
+      return;
+    }
+    if (key === "ArrowLeft" || key === "ArrowUp") {
+      this.sel = (this.sel - 1 + Math.max(1, towns.length)) % Math.max(1, towns.length);
+      se("cursor");
+      return;
+    }
+    if (key === "Enter" || key === " " || key === "z") {
+      const v = towns[this.sel];
+      if (!v) return this.onClose();
+      se("confirm");
+      ui.push(
+        new Menu(`${v.displayName}${municipalRank(v.tier)} — じんこう ${snapshot?.agents.filter((a2) => a2.region === v.regionId && a2.role !== "treasury").length ?? 0}にん`, [
+          { label: "ここへ とぶ", value: "go" },
+          { label: "じょうほう", value: "info" },
+          { label: "まちのグラフ", value: "graph" },
+          { label: "もどる", value: "back" },
+        ], (val) => {
+          if (val === "go") {
+            layerZ = 0;
+            player.x = v.gate[0];
+            player.y = v.gate[1] + 1;
+            player.px = player.x * CELL;
+            player.py = player.y * CELL;
+            log.push(`${v.displayName}に とんだ!`);
+            ui.clear();
+          } else if (val === "info") {
+            const region = snapshot?.regions.find((r) => r.id === v.regionId);
+            const ctx2 = region ? villageContext(v) : null;
+            ui.pop();
+            if (ctx2) villageInfo(ctx2);
+          } else if (val === "graph") {
+            ui.pop();
+            ui.push(new Info(`${v.displayName} — まちのグラフ`, cityGraph(v.regionId), () => ui.pop()));
+          } else ui.pop();
+        }, () => ui.pop()),
+      );
+      return;
+    }
+    if (["Escape", "m", "M", "x"].includes(key)) this.onClose();
   }
 
   render(c: CanvasRenderingContext2D, width: number, height: number): void {
     if (!map) return;
     const w = MAP_W * MINI_SCALE + 48;
-    const h = MAP_H * MINI_SCALE + 76;
+    const h = MAP_H * MINI_SCALE + 96;
     const x = (width - w) / 2;
     const y = (height - h) / 2;
     drawWindow(c, x, y, w, h);
-    drawText(c, "せかいちず", x + 24, y + 16, "#ffd75e");
+    drawText(c, "せかい ライブビュー — やじるし: まちをえらぶ / Enter: てをうつ", x + 24, y + 14, "#ffd75e");
     const ox = x + 24;
-    const oy = y + 52;
+    const oy = y + 46;
+    const now4 = performance.now();
     c.drawImage(miniMapCanvas(map), ox, oy);
-    // こうえきろせんず: gold arteries, thicker with trade, flowing with dashes.
+    const mx = (tx: number): number => ox + tx * MINI_SCALE;
+    const my = (ty: number): number => oy + ty * MINI_SCALE;
+
+    // Trade arteries flow gold.
     const flows = tradeFlows();
     const maxVol = Math.max(1, ...flows.map((f) => f.vol));
     for (const f of flows) {
       const va = map.villages.find((v) => v.regionId === f.a);
       const vb = map.villages.find((v) => v.regionId === f.b);
       if (!va || !vb) continue;
-      const x1 = ox + (va.x + va.w / 2) * MINI_SCALE;
-      const y1 = oy + (va.y + va.h / 2) * MINI_SCALE;
-      const x2 = ox + (vb.x + vb.w / 2) * MINI_SCALE;
-      const y2 = oy + (vb.y + vb.h / 2) * MINI_SCALE;
-      c.strokeStyle = `rgba(255, 215, 94, ${(0.25 + 0.6 * (f.vol / maxVol)).toFixed(2)})`;
+      c.strokeStyle = `rgba(255, 215, 94, ${(0.22 + 0.55 * (f.vol / maxVol)).toFixed(2)})`;
       c.lineWidth = 1 + 3 * (f.vol / maxVol);
       c.setLineDash([6, 6]);
-      c.lineDashOffset = -(performance.now() / 60) % 12;
+      c.lineDashOffset = -(now4 / 60) % 12;
       c.beginPath();
-      c.moveTo(x1, y1);
-      c.lineTo(x2, y2);
+      c.moveTo(mx(va.x + va.w / 2), my(va.y + va.h / 2));
+      c.lineTo(mx(vb.x + vb.w / 2), my(vb.y + vb.h / 2));
       c.stroke();
     }
     c.setLineDash([]);
     c.lineWidth = 1;
-    c.font = '13px "DotGothic16", monospace';
-    for (const v of map.villages) {
-      c.fillStyle = "#ffffff";
-      c.fillText(v.displayName, ox + v.x * MINI_SCALE, oy + v.y * MINI_SCALE - 3);
+
+    // Trains crawl their lines; trucks their highways; caravans their roads.
+    for (const rail of map.rails) {
+      if (rail.length < 4) continue;
+      const span = rail.length - 1;
+      const t = Math.floor(now4 / 130) % (span * 2);
+      const head = t <= span ? t : span * 2 - t;
+      const pt = rail[Math.max(0, Math.min(span, head))];
+      if (pt) {
+        c.fillStyle = "#c23a2e";
+        c.fillRect(mx(pt[0]) - 2, my(pt[1]) - 2, 5, 5);
+      }
     }
-    if (Math.floor(performance.now() / 300) % 2 === 0) {
+    for (const hw of map.highways) {
+      if (hw.length < 4) continue;
+      const span = hw.length - 1;
+      const t = Math.floor(now4 / 170) % (span * 2);
+      const head = t <= span ? t : span * 2 - t;
+      const pt = hw[Math.max(0, Math.min(span, head))];
+      if (pt) {
+        c.fillStyle = "#ffd75e";
+        c.fillRect(mx(pt[0]) - 1, my(pt[1]) - 1, 4, 4);
+      }
+    }
+    for (const cv of caravans) {
+      const t = (now4 - cv.start) / cv.dur;
+      if (t < 0 || t > 1) continue;
+      const cx2 = cv.from[0] + (cv.to[0] - cv.from[0]) * t;
+      const cy2 = cv.from[1] + (cv.to[1] - cv.from[1]) * t;
+      c.fillStyle = "#b07a3c";
+      c.fillRect(mx(cx2) - 1, my(cy2) - 1, 4, 4);
+    }
+
+    // Construction blinks; festivals sparkle; the kaiju looms.
+    for (const f of constructionFx) {
+      if (Math.floor(now4 / 350) % 2 === 0) {
+        c.strokeStyle = "#e8963c";
+        c.strokeRect(mx(f.x) - 3, my(f.y) - 3, 7, 7);
+      }
+    }
+    for (const [rid] of festivals) {
+      const v = map.villages.find((x2) => x2.regionId === rid);
+      if (v && Math.floor(now4 / 260) % 2 === 0) {
+        c.fillStyle = "#ff9de2";
+        c.fillRect(mx(v.x + v.w / 2) - 2, my(v.y) - 6, 4, 4);
+      }
+    }
+    if (kaijuActive) {
+      const t4 = now4 / 1000;
+      const kx = MAP_W / 2 + Math.sin(t4 / 19) * (MAP_W / 2 - 40);
+      const ky = MAP_H / 2 + Math.cos(t4 / 26) * (MAP_H / 2 - 40);
+      c.fillStyle = "#e87aa0";
+      c.beginPath();
+      c.arc(mx(kx), my(ky), 6 + Math.sin(t4 * 3) * 2, 0, Math.PI * 2);
+      c.fill();
+    }
+
+    // Towns: label, population, trouble chips, selection ring.
+    c.font = '13px "DotGothic16", monospace';
+    map.villages.forEach((v, i) => {
+      const pop = snapshot?.agents.filter((a2) => a2.region === v.regionId && a2.role !== "treasury").length ?? 0;
+      c.fillStyle = i === this.sel ? "#ffd75e" : "#ffffff";
+      c.fillText(`${v.displayName}${municipalRank(v.tier)} ${pop}`, mx(v.x), my(v.y) - 4);
+      const troubles = cityProblems(v);
+      if (troubles.length > 0 && Math.floor(now4 / 500) % 2 === 0) {
+        c.fillStyle = "#e04040";
+        c.fillRect(mx(v.x) - 8, my(v.y) - 12, 6, 6);
+      }
+      if (i === this.sel) {
+        c.strokeStyle = "#ffd75e";
+        c.lineWidth = 2;
+        c.strokeRect(mx(v.x) - 3, my(v.y) - 3, v.w * MINI_SCALE + 6, v.h * MINI_SCALE + 6);
+        c.lineWidth = 1;
+      }
+    });
+    if (Math.floor(now4 / 300) % 2 === 0) {
       c.fillStyle = "#ffffff";
       c.fillRect(ox + player.x * MINI_SCALE - 2, oy + player.y * MINI_SCALE - 2, MINI_SCALE + 4, MINI_SCALE + 4);
+    }
+    const selV = map.villages[this.sel];
+    if (selV) {
+      const troubles = cityProblems(selV);
+      c.font = '14px "DotGothic16", monospace';
+      c.fillStyle = "#8fd0ff";
+      c.fillText(
+        `▶ ${selV.displayName}${municipalRank(selV.tier)}  ${troubles.length > 0 ? troubles.map((tr) => `${tr.icon}${tr.label}`).join(" ") : "なやみなし"}`,
+        ox,
+        oy + MAP_H * MINI_SCALE + 10,
+      );
     }
   }
 }
