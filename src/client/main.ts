@@ -2965,6 +2965,7 @@ class MapOverlay {
   private sel = 0;
   private replayAt: number | null = null;
   private replayStart = 0;
+  private layer = 0;
 
   constructor(private readonly onClose: () => void) {
     // Start the cursor on the hero's home town.
@@ -3017,6 +3018,11 @@ class MapOverlay {
       );
       return;
     }
+    if (key === "f" || key === "F") {
+      this.layer = (this.layer + 1) % 5;
+      se("cursor");
+      return;
+    }
     if (key === "t" || key === "T") {
       // タイムラプス: replay the recent past at high speed.
       this.replayAt = Math.max(0, allEvents.length - 400);
@@ -3041,6 +3047,33 @@ class MapOverlay {
     c.drawImage(miniMapCanvas(map), ox, oy);
     const mx = (tx: number): number => ox + tx * MINI_SCALE;
     const my = (ty: number): number => oy + ty * MINI_SCALE;
+
+    // SimCity data layers: translucent heat over every settlement.
+    const LAYER_NAMES = ["なし", "じんこうみつど", "ちか (とちのねだん)", "でんきもう", "まちのみりょく"];
+    if (this.layer > 0) {
+      const metric = (v: Village): number => {
+        const pop = snapshot?.agents.filter((a2) => a2.region === v.regionId && a2.role !== "treasury").length ?? 0;
+        const bank = snapshot?.agents.find((a2) => a2.id === `treasury@${v.regionId}`)?.balances.currency ?? 0;
+        const charm = snapshot?.items.filter((i2) => i2.kind.startsWith("bld") && !i2.owner.startsWith("treasury@") && (i2.owner.split("@")[1] ?? "") === v.regionId).length ?? 0;
+        if (this.layer === 1) return pop;
+        if (this.layer === 2) return pop * 2 + bank / 5 + charm;
+        if (this.layer === 3) return v.powered ? 1 : 0;
+        return charm;
+      };
+      const vals = map.villages.map(metric);
+      const maxV = Math.max(1, ...vals);
+      map.villages.forEach((v, i) => {
+        const r = (vals[i] ?? 0) / maxV;
+        const color = this.layer === 3
+          ? (vals[i] ?? 0) > 0 ? "rgba(80, 220, 120, 0.35)" : "rgba(220, 60, 60, 0.35)"
+          : `rgba(${Math.round(80 + 175 * r)}, ${Math.round(220 - 160 * r)}, 80, ${(0.15 + 0.3 * r).toFixed(2)})`;
+        c.fillStyle = color;
+        c.fillRect(mx(v.x), my(v.y), v.w * MINI_SCALE, v.h * MINI_SCALE);
+      });
+      c.font = '14px "DotGothic16", monospace';
+      c.fillStyle = "#8fd0ff";
+      c.fillText(`データレイヤー: ${LAYER_NAMES[this.layer]} (Fで きりかえ)`, ox + MAP_W * MINI_SCALE - 320, oy - 14);
+    }
 
     // Trade arteries flow gold.
     const flows = tradeFlows();
@@ -3437,7 +3470,35 @@ function tryStep(dx: number, dy: number): void {
 
 // ---- update / render -------------------------------------------------------
 
+let lastNightPulse = 0;
+
 function update(dt: number): void {
+  // The town sleeps: after dark, villagers drift home indoors in waves, and
+  // the streets belong to the lamplight. They pour back out at sunrise.
+  {
+    const nowU = performance.now();
+    if (nowU - lastNightPulse > 5000) {
+      lastNightPulse = nowU;
+      const night = dayPhase().night;
+      if (night) {
+        for (const m of mobs) {
+          if (nowU >= m.hiddenUntil && Math.random() < 0.22 && !isChildName(m.agent.id)) {
+            m.hiddenUntil = nowU + 25_000 + Math.random() * 35_000;
+            if (m.home) {
+              const door = m.home.homes[Math.floor(Math.random() * Math.max(1, m.home.homes.length))];
+              if (door) {
+                m.x = door[0];
+                m.y = door[1] + 1;
+                m.px = m.x * CELL;
+                m.py = m.y * CELL;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   particles.update(dt);
   wildlife.update(dt, canvas.width, canvas.height, camXg, camYg);
   weather.update(dt, biomeAt(player.x, player.y), dayPhase().night, canvas.width, canvas.height);
