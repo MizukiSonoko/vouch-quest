@@ -1763,6 +1763,7 @@ const VERBS: readonly string[] = [
   "おじぎする (1)", "ばんざいする (2)", "ハートを おくる (3)", "はなびを あげる", "がっきを かなでる", "ごはんを たべる",
   "きを きる", "いしを ほる", "こうどうに もぐる", "こうせきを ほりあてる", "たてものを かいたいする", "まちのなやみを かいけつする", "RCI需要を よむ",
   "てつどうろせんを ひく", "かいどうを ひく", "ろせんを ゆずる/かいたいする", "ごうせいで かこうする", "こうえきろせんずを ながめる",
+  "ゆでんを さがす", "さいゆきを たてる", "せきゆを くみあげる", "きかいを せいぞうする", "けいえいちょうを つける",
 ];
 
 /** 機能: the SYSTEMS that run this world, named and counted. */
@@ -2357,6 +2358,7 @@ function fieldMenu(): void {
             { out: "dougubako", label: "どうぐばこ (てっこう+もくざい)", needs: { tekko: 1, mokuzai: 1 } },
             { out: "gem", label: "ほうせき (きん+いし を みがく)", needs: { kin: 1, ishi: 1 } },
             { out: "lantern", label: "ランタン (てっこう+たいまつ)", needs: { tekko: 1, torch: 1 } },
+            { out: "kikai", label: "きかい (せきゆx2+てっこう) — じゅうこうぎょう", needs: { sekiyu: 2, tekko: 1 } },
           ];
           const items = myItems();
           const canMake = (needs: Readonly<Record<string, number>>): boolean =>
@@ -2593,6 +2595,47 @@ function interact(): void {
       return;
     }
   }
+  if (tile === Tile.Derrick) {
+    const deed = snapshot.items.find((i2) => {
+      const bm = /^bldderrick(\d+)x(\d+)$/.exec(i2.kind);
+      return bm && Number(bm[1]) === fx && Number(bm[2]) === fy && !i2.owner.startsWith("treasury@");
+    });
+    if (!deed) {
+      ui.push(new Info("さいゆき", ["さびついた さいゆきだ。もちぬしは いない。"], () => ui.pop()));
+      return;
+    }
+    if (deed.owner !== snapshot.me.agentId) {
+      ui.push(new Info("さいゆき", [`${deed.owner}の さいゆきだ。`, "かってに くみあげては いけない。"], () => ui.pop()));
+      return;
+    }
+    const cooldownKey = `vouchquest.pump.${fx}x${fy}`;
+    const last = Number(localStorage.getItem(cooldownKey) ?? "0");
+    if (Date.now() - last < 90_000) {
+      ui.push(new Info("さいゆき", ["ポンプは まだ あつい。すこし やすませよう。", `(あと ${Math.ceil((90_000 - (Date.now() - last)) / 1000)}びょう)`], () => ui.pop()));
+      return;
+    }
+    ui.push(
+      new Menu("さいゆきが ぎいぎいと まわっている。", [
+        { label: "くみあげる (せきゆ x2)", value: "pump" },
+        { label: "やめる", value: "cancel" },
+      ], (v) => {
+        if (v === "pump") {
+          localStorage.setItem(cooldownKey, String(Date.now()));
+          void (async () => {
+            await runAct({ kind: "forage", itemKind: "sekiyu" }, "くみあげる");
+            await postAct({ kind: "forage", itemKind: "sekiyu" } as Record<string, unknown>);
+            await refreshWorld(false);
+            log.push("せきゆを 2たる くみあげた! しょうにんが たかく かう。");
+          })();
+        } else ui.clear();
+      }, () => ui.clear()),
+    );
+    return;
+  }
+  if (tile === Tile.Oil) {
+    ui.push(new Info("ゆでん", ["じめんから くろい あぶらが しみだしている…", "「けんちく」で さいゆきを たてれば くみあげられる! (てっこうx2)"], () => ui.pop()));
+    return;
+  }
   if (tile === Tile.Tree || tile === Tile.SnowTree) {
     ui.push(
       new Menu("おおきな きだ。", [
@@ -2657,7 +2700,12 @@ function interact(): void {
         { label: "しゅうかくする (やさい)", value: "harvest", disabled: !snapshot.me.agentId },
         { label: "やめる", value: "cancel" },
       ], (v) => {
-        if (v === "harvest") void runAct({ kind: "forage", itemKind: "yasai" }, "やさいを しゅうかくする");
+        if (v === "harvest") void (async () => {
+            await runAct({ kind: "forage", itemKind: "yasai" }, "しゅうかく");
+            await postAct({ kind: "forage", itemKind: "yasai" } as Record<string, unknown>);
+            await refreshWorld(false);
+            log.push("ほうさく! やさいを 2つ しゅうかくした。");
+          })();
         else ui.clear();
       }, () => ui.clear()),
     );
@@ -2823,6 +2871,8 @@ const MINI_COLORS: Record<number, string> = {
   [Tile.Crossing]: "#c8c8d0",
   [Tile.TowerRedTop]: "#d9553f",
   [Tile.TowerRedMid]: "#d9553f",
+  [Tile.Oil]: "#1a1a22",
+  [Tile.Derrick]: "#3c4048",
 };
 const MINI_SCALE = 2;
 let miniCache: { forMap: WorldMap; canvas: HTMLCanvasElement } | null = null;

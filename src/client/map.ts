@@ -75,6 +75,8 @@ export const enum Tile {
   Crossing = 55,
   TowerRedTop = 56,
   TowerRedMid = 57,
+  Oil = 58,
+  Derrick = 59,
 }
 
 const SOLID: ReadonlySet<Tile> = new Set([
@@ -122,6 +124,7 @@ const SOLID: ReadonlySet<Tile> = new Set([
   Tile.Billboard,
   Tile.TowerRedTop,
   Tile.TowerRedMid,
+  Tile.Derrick,
 ]);
 
 /** Village slot origins (top-left), an 8x7 lattice spaced for the largest plot (34x34). */
@@ -886,6 +889,17 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     }
   }
 
+  // ゆでん: a dozen oil seeps, fixed for the life of the world. Build a derrick
+  // on one and pump — the heavy industry of this continent.
+  for (let i = 0; i < 12; i++) {
+    let h2 = (i * 2654435761) % 4294967296;
+    h2 = ((h2 ^ (h2 >> 13)) * 1274126177) % 4294967296;
+    const ox2 = 16 + (Math.abs(h2) % (MAP_W - 32));
+    const oy2 = 16 + (Math.abs(h2 >> 7) % (MAP_H - 32));
+    if ((tiles[oy2 * MAP_W + ox2] ?? Tile.Water) === Tile.Water) continue;
+    tiles[oy2 * MAP_W + ox2] = Tile.Oil;
+  }
+
   const settle = snapshot.regions
     .filter((r) => r.id !== AFTERLIFE)
     .map((region, i) => {
@@ -922,7 +936,7 @@ export function buildMap(snapshot: Snapshot): WorldMap {
   // Player constructions: a `bld<type><x>x<y>` item in the log IS a building.
   // Whoever holds the deed, the structure stands at those absolute coordinates —
   // derived identically for every player from the shared item list.
-  const REPLACEABLE = new Set<number>([Tile.Grass, Tile.Grass2, Tile.Flower, Tile.Sand, Tile.Snow, Tile.Swamp, Tile.Path]);
+  const REPLACEABLE = new Set<number>([Tile.Grass, Tile.Grass2, Tile.Flower, Tile.Sand, Tile.Snow, Tile.Swamp, Tile.Path, Tile.Oil]);
   const canPlace = (x: number, y: number): boolean => x >= 2 && y >= 2 && x < MAP_W - 2 && y < MAP_H - 2 && REPLACEABLE.has(tiles[y * MAP_W + x] ?? Tile.Water);
   for (const item of snapshot.items) {
     const parsed = /^bld([a-z]+)(\d+)x(\d+)$/.exec(item.kind);

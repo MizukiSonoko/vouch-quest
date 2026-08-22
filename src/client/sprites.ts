@@ -1356,6 +1356,63 @@ const CAR_RED = [
   "................",
 ];
 
+const OIL_A = [
+  "gggggggggggggggg",
+  "ggggKKKKKKKggggg",
+  "ggKKxxxxxxxKKggg",
+  "gKxxxxxxxxxxxKgg",
+  "gKxxKxxxxxxxxKgg",
+  "KxxxxxxxxKxxxxKg",
+  "KxxxxxxxxxxxxxKg",
+  "KxxKxxxxxxxKxxKg",
+  "KxxxxxxKxxxxxxKg",
+  "gKxxxxxxxxxxxKgg",
+  "gKxxxxKxxxxxxKgg",
+  "ggKKxxxxxxxKKggg",
+  "ggggKKKKKKKggggg",
+  "gggdgggggggGgggg",
+  "gggggggggggggggg",
+  "ggGggggdgggggggg",
+];
+
+const OIL_B = [
+  "gggggggggggggggg",
+  "ggggKKKKKKKggggg",
+  "ggKKxxxxxxxKKggg",
+  "gKxxxxKxxxxxxKgg",
+  "gKxxxxxxxxKxxKgg",
+  "KxxxxxxxxxxxxxKg",
+  "KxxKxxxxxxxxxxKg",
+  "KxxxxxxxxxKxxxKg",
+  "KxxxxKxxxxxxxxKg",
+  "gKxxxxxxxxxxxKgg",
+  "gKxxxxxxxKxxxKgg",
+  "ggKKxxxxxxxKKggg",
+  "ggggKKKKKKKggggg",
+  "gggdgggggggGgggg",
+  "gggggggggggggggg",
+  "ggGggggdgggggggg",
+];
+
+const DERRICK = [
+  "......xx........",
+  ".....xKKx.......",
+  "....xKxxKx......",
+  "...xKx..xKxxx...",
+  "...xKx..xKKKKx..",
+  "..xKx....xKKKKx.",
+  "..xKx.....xKKx..",
+  ".xKKKKKKKKKKx...",
+  ".xKx......xKx...",
+  ".xKx......xKx...",
+  "xKx........xKx..",
+  "xKx........xKx..",
+  "xKKKKKKKKKKKKKx.",
+  "xxxxxxxxxxxxxxx.",
+  "gggKxxxxxxKggggg",
+  "gggggggggggggggg",
+];
+
 export function buildSprites(): SpriteSet {
   const tiles = new Map<Tile, HTMLCanvasElement>([
     [Tile.Grass, draw(GRASS)],
@@ -1416,12 +1473,15 @@ export function buildSprites(): SpriteSet {
     [Tile.Crossing, draw(CROSSING)],
     [Tile.TowerRedTop, draw(TOWERRED_TOP)],
     [Tile.TowerRedMid, draw(TOWERRED_MID)],
+    [Tile.Oil, draw(OIL_A)],
+    [Tile.Derrick, draw(DERRICK)],
   ]);
   const tilesAlt = new Map<Tile, HTMLCanvasElement>([
     [Tile.Water, draw(WATER_B)],
     [Tile.Swamp, draw(SWAMP_B)],
     [Tile.Flower, draw(FLOWER_B)],
     [Tile.Neon, draw(NEON_B)],
+    [Tile.Oil, draw(OIL_B)],
   ]);
   const pair = (key: string): readonly [HTMLCanvasElement, HTMLCanvasElement] => [draw(person(key, 0)), draw(person(key, 1))];
   const heroCache = new Map<number, readonly [HTMLCanvasElement, HTMLCanvasElement]>();

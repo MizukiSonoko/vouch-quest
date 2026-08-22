@@ -71,6 +71,7 @@ function generate(): Record<string, BuildingDef> {
     defs[`neontower${n}`] = { label: `ネオンビル (${floors}かい)`, fee: 20 + floors * 12, category: "すまい", cells: neonTower };
   }
   defs["mediatower"] = { label: "ビジョンビル (5かい)", fee: 90, category: "すまい", cells: tower(5).map(([dx, dy, t2], i) => (i === 4 ? ([dx, dy, Tile.Billboard] as const) : ([dx, dy, t2] as const))) };
+  defs["derrick"] = { label: "さいゆき (ゆでんの うえに)", fee: 60, category: "みせ・しごと", cells: [[0, 0, Tile.Derrick]], materials: { tekko: 2 } };
   defs["greenhouse"] = { label: "おんしつ (ガラスばり)", fee: 28, category: "みせ・しごと", cells: [[0, 0, Tile.TowerGlass], [1, 0, Tile.TowerGlass], [0, 1, Tile.Farm], [1, 1, Tile.Farm]] };
   // --- みせ・しごと ---
   defs["shop"] = { label: "やたい", fee: 10, category: "みせ・しごと", cells: [[0, 0, Tile.Stall]] };

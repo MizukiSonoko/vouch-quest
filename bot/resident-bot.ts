@@ -225,14 +225,14 @@ async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promis
     const rid = TOWNS.find((t) => !taken.has(t)) ?? `machi${Math.floor(rand() * 900) + 100}`;
     say(name, `founds ${rid}`, await client.found(name, rid, rid.charAt(0).toUpperCase() + rid.slice(1)));
     await sleep(900);
-    say(name, "moves in", await client.admit(name, `${name}@${rid}`, rid, ROLES[name], name === "Zai" ? 250 : 120));
+    say(name, "moves in", await client.admit(name, `${name}@${rid}`, rid, ROLES[name], name === "Zai" ? 600 : 300));
     await sleep(900);
     await client.amend(name, rid, { policy: "items", value: { minting: "anyone" } });
     return;
   }
   const home = pick(botOwned);
   const owner = home.owner ?? "";
-  say(owner, `hires ${name} into ${home.id}`, await clientFor(owner).admit(owner, `${name}@${home.id}`, home.id, ROLES[name], name === "Ginko" ? 200 : 80));
+  say(owner, `hires ${name} into ${home.id}`, await clientFor(owner).admit(owner, `${name}@${home.id}`, home.id, ROLES[name], name === "Ginko" ? 500 : 200));
 }
 
 // --- one waking resident --------------------------------------------------------
@@ -510,14 +510,14 @@ async function act(
       } else if (name === "Zai") {
         if (roll < 0.35 && neighbors.length > 0 && me.balances.currency > 40) {
           const to = pick(neighbors);
-          say(name, `invests ${8 + Math.floor(rand() * 12)}G in ${to.id}`, await client.transfer(me.id, to.id, 8 + Math.floor(rand() * 12)));
+          say(name, `invests ${25 + Math.floor(rand() * 45)}G in ${to.id}`, await client.transfer(me.id, to.id, 25 + Math.floor(rand() * 45)));
         } else if (roll < 0.6 && owned.length > 0) {
           const town = pick(owned);
           const residents = agents.filter((a) => a.region === town.id && a.role !== "treasury").length;
           const fresh = SETTLERS.filter((n) => !agents.some((a) => a.id === `${n}@${town.id}`)).slice(0, 2);
           for (const f of fresh) {
             if (residents >= 26) break;
-            say(name, `hires ${f} for ${town.id}`, await client.admit(name, `${f}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 45));
+            say(name, `hires ${f} for ${town.id}`, await client.admit(name, `${f}@${town.id}`, town.id, pick(["artisan", "merchant", "broker"]), 110));
             await sleep(900);
           }
         } else if (roll < 0.68 && owned.length > 1) {
@@ -639,7 +639,7 @@ async function villagerAct(
         say(agent.id, "buys insurance", await client.transfer(agent.id, insurer.id, 1 + Math.floor(rand() * 2)));
       } else if (neighbors.length > 0) {
         const to = neighbors[Math.floor(rand() * neighbors.length)];
-        if (to) say(agent.id, `pays ${to.id}`, await client.transfer(agent.id, to.id, 1 + Math.floor(rand() * 4)));
+        if (to) say(agent.id, `pays ${to.id}`, await client.transfer(agent.id, to.id, 5 + Math.floor(rand() * 16)));
       }
     } else if (roll < 0.48 && agent.balances.currency > 6) {
       // Family economics: a gift for the spouse, pocket money for the kids.
@@ -728,7 +728,7 @@ async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region
         const agentId = `${prof.name}@${home.id}`;
         await ensureRegistered(clientFor(agentId), agentId);
         await sleep(600);
-        say(home.owner, `hires genome-born ${prof.name} into ${home.id}`, await clientFor(home.owner).admit(home.owner, agentId, home.id, prof.role, 70));
+        say(home.owner, `hires genome-born ${prof.name} into ${home.id}`, await clientFor(home.owner).admit(home.owner, agentId, home.id, prof.role, 160));
       }
       return;
     }
@@ -837,7 +837,7 @@ function saveMind(m: { answeredSeq: number; deposits: Deposit[] }): void {
 
 const KIND_PRICES: Record<string, number> = {
   herb: 8, torch: 12, tsubo: 15, shield: 30, sword: 45, gem: 80, crown: 150,
-  takara: 25, petslime: 30, petusagi: 35, mokuzai: 4, ishi: 4, tekko: 30, kin: 80, hanabi: 18, gakki: 22, dougubako: 55,
+  takara: 25, petslime: 30, petusagi: 35, mokuzai: 4, ishi: 4, tekko: 30, kin: 80, hanabi: 18, gakki: 22, dougubako: 55, sekiyu: 40, kikai: 150,
   bread: 6, fish: 7, sakana: 7, yasai: 5, lantern: 12, rope: 8, boots: 14, tea: 10, brick: 9, gear: 16,
 };
 
