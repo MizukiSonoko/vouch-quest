@@ -51,6 +51,7 @@ const EXTRA_NAMES: Readonly<Record<string, string>> = {
   ishi: "いし",
   tekko: "てっこう",
   kin: "きんのかたまり",
+  dougubako: "どうぐばこ",
   daidogei: "げいのふだ",
 };
 

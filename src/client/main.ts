@@ -479,6 +479,14 @@ function celebrate(): void {
         const entries = (p["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
         const at = villageCenterPx(regionOfAgent(entries[0]?.agentId ?? null));
         if (at) particles.sparkle(at[0], at[1], "#ffd75e");
+        // A fresh cross-town trade sends a porter down the road with the goods.
+        {
+          const payer2 = entries.find((x) => (x.currencyDelta ?? 0) < 0 && !x.agentId?.startsWith("treasury@"));
+          const payee2 = entries.find((x) => (x.currencyDelta ?? 0) > 0 && !x.agentId?.startsWith("treasury@"));
+          const ra = payer2?.agentId?.split("@")[1] ?? "";
+          const rb = payee2?.agentId?.split("@")[1] ?? "";
+          if (ra && rb && ra !== rb && ra !== AFTERLIFE && rb !== AFTERLIFE) spawnCaravan(rb, ra);
+        }
         // A big gift straight into a treasury throws a festival (きふ culture).
         const gift = entries.find((x) => x.agentId?.startsWith("treasury@") && (x.currencyDelta ?? 0) >= 50);
         const giver = entries.find((x) => (x.currencyDelta ?? 0) < 0 && !x.agentId?.startsWith("treasury@"));
@@ -1973,6 +1981,69 @@ interface Milestone {
   readonly reachedAtSeq: number | null;
 }
 
+/** こうえきの ながれ: cross-town trade volumes folded from the recent log —
+ * the Simutrans joy of WATCHING the economy move. */
+function tradeFlows(): { a: string; b: string; vol: number }[] {
+  const vols = new Map<string, number>();
+  const bump = (r1: string, r2: string, amount: number): void => {
+    if (!r1 || !r2 || r1 === r2 || r1 === AFTERLIFE || r2 === AFTERLIFE) return;
+    const key = r1 < r2 ? `${r1}|${r2}` : `${r2}|${r1}`;
+    vols.set(key, (vols.get(key) ?? 0) + amount);
+  };
+  for (const e of allEvents.slice(-800)) {
+    const p = e.payload;
+    if (e.type === "economy.settled") {
+      const entries = (p["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+      const payer = entries.find((x) => (x.currencyDelta ?? 0) < 0 && !x.agentId?.startsWith("treasury@"));
+      const payee = entries.find((x) => (x.currencyDelta ?? 0) > 0 && !x.agentId?.startsWith("treasury@"));
+      if (payer?.agentId && payee?.agentId) {
+        bump(payer.agentId.split("@")[1] ?? "", payee.agentId.split("@")[1] ?? "", Math.abs(payee.currencyDelta ?? 1));
+      }
+    } else if (e.type === "item.transferred") {
+      const from = typeof p["from"] === "string" ? (p["from"] as string) : "";
+      const to = typeof p["to"] === "string" ? (p["to"] as string) : "";
+      if (from && to && !to.startsWith("treasury@")) bump(from.split("@")[1] ?? "", to.split("@")[1] ?? "", 3);
+    }
+  }
+  return [...vols.entries()]
+    .map(([key, vol]) => {
+      const [a2, b2] = key.split("|");
+      return { a: a2 ?? "", b: b2 ?? "", vol };
+    })
+    .filter((f) => f.vol >= 2)
+    .sort((f1, f2) => f2.vol - f1.vol)
+    .slice(0, 24);
+}
+
+/** たいしょう: a porter really walks the road for each fresh cross-town trade. */
+let caravans: { from: readonly [number, number]; to: readonly [number, number]; start: number; dur: number }[] = [];
+
+function spawnCaravan(fromRegion: string, toRegion: string): void {
+  const va = map?.villages.find((v) => v.regionId === fromRegion);
+  const vb = map?.villages.find((v) => v.regionId === toRegion);
+  if (!va || !vb || caravans.length >= 8) return;
+  const dist = Math.hypot(vb.gate[0] - va.gate[0], vb.gate[1] - va.gate[1]);
+  caravans.push({ from: va.gate, to: vb.gate, start: performance.now(), dur: 8000 + dist * 220 });
+}
+
+function drawCaravans(camX: number, camY: number): void {
+  if (!ctx) return;
+  caravans = caravans.filter((c) => performance.now() < c.start + c.dur);
+  for (const c of caravans) {
+    const t = (performance.now() - c.start) / c.dur;
+    const x = (c.from[0] + (c.to[0] - c.from[0]) * t) * CELL - camX;
+    const y = (c.from[1] + (c.to[1] - c.from[1]) * t) * CELL - camY + Math.sin(performance.now() / 180) * 1.5;
+    const porter = sprites.roles["merchant"];
+    if (porter) ctx.drawImage(porter[Math.floor(performance.now() / 250) % 2 === 0 ? 0 : 1], x, y);
+    ctx.fillStyle = "#8a5a2b";
+    ctx.fillRect(x + 10, y - 6, 26, 14);
+    ctx.strokeStyle = "#111";
+    ctx.strokeRect(x + 10, y - 6, 26, 14);
+    ctx.fillStyle = "#c49a45";
+    ctx.fillRect(x + 14, y - 3, 6, 6);
+  }
+}
+
 function worldMilestones(): Milestone[] {
   let admitted = 0;
   let deaths = 0;
@@ -2143,16 +2214,42 @@ function fieldMenu(): void {
           }
         } else if (value === "craft") {
           const learned = journal().learned;
-          if (learned.length === 0) {
-            ui.push(new Info("ものづくり", ["まだ わざを ならっていない。", "★じるしの しんかのたみに 「でしいり」して わざを ならおう。"], () => ui.pop()));
+          const RECIPES: readonly { out: string; label: string; needs: Readonly<Record<string, number>> }[] = [
+            { out: "dougubako", label: "どうぐばこ (てっこう+もくざい)", needs: { tekko: 1, mokuzai: 1 } },
+            { out: "gem", label: "ほうせき (きん+いし を みがく)", needs: { kin: 1, ishi: 1 } },
+            { out: "lantern", label: "ランタン (てっこう+たいまつ)", needs: { tekko: 1, torch: 1 } },
+          ];
+          const items = myItems();
+          const canMake = (needs: Readonly<Record<string, number>>): boolean =>
+            Object.entries(needs).every(([mk, n]) => items.filter((i2) => i2.kind === mk).length >= n);
+          if (learned.length === 0 && !RECIPES.some((r) => canMake(r.needs))) {
+            ui.push(new Info("ものづくり", ["まだ わざも ざいりょうも ない。", "★じるしの しんかのたみに 「でしいり」するか、", "きを きり いわを ほって ざいりょうを あつめよう。"], () => ui.pop()));
           } else {
             ui.push(
               new Menu("なにを つくる? (むらの おきてに したがう)", [
-                ...learned.map((k) => ({ label: `${kindName(k)}を つくる`, value: k })),
+                ...learned.map((k) => ({ label: `${kindName(k)}を つくる`, value: `mk:${k}` })),
+                ...RECIPES.map((r) => ({ label: `ごうせい: ${r.label}`, value: `rc:${r.out}`, disabled: !canMake(r.needs) })),
                 { label: "やめる", value: "cancel" },
-              ], (k) => {
-                if (k !== "cancel") void runAct({ kind: "forage", itemKind: k }, `${kindName(k)}づくり`);
-                else ui.clear();
+              ], (choice) => {
+                if (choice === "cancel") return ui.clear();
+                if (choice.startsWith("mk:")) {
+                  const k = choice.slice(3);
+                  void runAct({ kind: "forage", itemKind: k }, `${kindName(k)}づくり`);
+                  return;
+                }
+                const recipe = RECIPES.find((r) => `rc:${r.out}` === choice);
+                if (!recipe) return ui.clear();
+                void (async () => {
+                  // The chain is honest: inputs are surrendered to the treasury,
+                  // then the refined good is minted under the local law.
+                  const home = snapshot?.me.agentId?.split("@")[1] ?? "";
+                  for (const [mk, n] of Object.entries(recipe.needs)) {
+                    const held = myItems().filter((i2) => i2.kind === mk).slice(0, n);
+                    for (const it of held) await postAct({ kind: "transferItem", itemId: it.id, to: `treasury@${home}` });
+                  }
+                  await runAct({ kind: "forage", itemKind: recipe.out }, `ごうせい: ${kindName(recipe.out)}`);
+                  extraExtra(`かこう せいこう! ${kindName(recipe.out)}が できあがった!`);
+                })();
               }, () => ui.clear()),
             );
           }
@@ -2739,6 +2836,28 @@ class MapOverlay {
     const ox = x + 24;
     const oy = y + 52;
     c.drawImage(miniMapCanvas(map), ox, oy);
+    // こうえきろせんず: gold arteries, thicker with trade, flowing with dashes.
+    const flows = tradeFlows();
+    const maxVol = Math.max(1, ...flows.map((f) => f.vol));
+    for (const f of flows) {
+      const va = map.villages.find((v) => v.regionId === f.a);
+      const vb = map.villages.find((v) => v.regionId === f.b);
+      if (!va || !vb) continue;
+      const x1 = ox + (va.x + va.w / 2) * MINI_SCALE;
+      const y1 = oy + (va.y + va.h / 2) * MINI_SCALE;
+      const x2 = ox + (vb.x + vb.w / 2) * MINI_SCALE;
+      const y2 = oy + (vb.y + vb.h / 2) * MINI_SCALE;
+      c.strokeStyle = `rgba(255, 215, 94, ${(0.25 + 0.6 * (f.vol / maxVol)).toFixed(2)})`;
+      c.lineWidth = 1 + 3 * (f.vol / maxVol);
+      c.setLineDash([6, 6]);
+      c.lineDashOffset = -(performance.now() / 60) % 12;
+      c.beginPath();
+      c.moveTo(x1, y1);
+      c.lineTo(x2, y2);
+      c.stroke();
+    }
+    c.setLineDash([]);
+    c.lineWidth = 1;
     c.font = '13px "DotGothic16", monospace';
     for (const v of map.villages) {
       c.fillStyle = "#ffffff";
@@ -3525,6 +3644,7 @@ function render(): void {
 
   drawTrains(camX, camY, 0);
   drawCars(camX, camY);
+  drawCaravans(camX, camY);
   drawBillboards(camX, camY);
 
   // Transmission lines hum between plants and substations, pylons in step.
