@@ -338,6 +338,20 @@ async function refreshWorld(repositionHero: boolean): Promise<void> {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) cells.add((v.station[1] + dy) * MAP_W + (v.station[0] + dx));
     }
     subwayCells = cells;
+    {
+      const now3 = performance.now();
+      for (const it of snap.items) {
+        const bm = /^(?:bld[a-z]+|line(?:rail|road))(\d+)x(\d+)/.exec(it.kind);
+        if (!bm) continue;
+        if (knownDeeds.has(it.id)) continue;
+        knownDeeds.add(it.id);
+        if (deedsPrimed && !it.owner.startsWith("treasury@")) {
+          constructionFx.push({ x: Number(bm[1]), y: Number(bm[2]), until: now3 + 45_000 });
+          log.push("どこかで つちおとが きこえる… (こうじちゅう)");
+        }
+      }
+      deedsPrimed = true;
+    }
     if (layerZ === 1 && !ELEVATED_TILES.has(tileAt(map, player.x, player.y))) layerZ = 0;
     if (layerZ === -1 && !subwayCells.has(player.y * MAP_W + player.x)) layerZ = 0;
   }
@@ -728,6 +742,12 @@ const petTrail = { x: 0, y: 0 };
 /** ぼうえんきょう: a borrowed viewpoint — look at a far village without moving. */
 let spy: { x: number; y: number; until: number } | null = null;
 let heroEmote: { text: string; until: number } | null = null;
+/** こうじちゅう: fresh deeds raise scaffolding everyone can watch. */
+const knownDeeds = new Set<string>();
+let deedsPrimed = false;
+let constructionFx: { x: number; y: number; until: number }[] = [];
+/** きょだいスライム: while the latest mutation is an omen, a harmless kaiju roams. */
+let kaijuActive = false;
 /** The fun spine: level and era goals, folded from the hero's real deeds. */
 let heroProgress: Progress | null = null;
 let xpFloats: { text: string; x: number; y: number; until: number }[] = [];
@@ -3839,6 +3859,47 @@ function render(): void {
     ctx.globalCompositeOperation = "source-over";
   }
 
+  constructionFx = constructionFx.filter((f) => performance.now() < f.until);
+  for (const f of constructionFx) {
+    const px2 = f.x * CELL - camX;
+    const py2 = f.y * CELL - camY;
+    ctx.strokeStyle = "#b07a3c";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(px2 - 4, py2 - 4, CELL + 8, CELL + 8);
+    ctx.beginPath();
+    ctx.moveTo(px2 - 4, py2 - 4);
+    ctx.lineTo(px2 + CELL + 4, py2 + CELL + 4);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    if (Math.floor(performance.now() / 400) % 2 === 0) {
+      ctx.font = '13px "DotGothic16", monospace';
+      ctx.fillStyle = "#ffd75e";
+      ctx.fillText("こうじちゅう", px2 - 10, py2 - 20);
+      particles.sparkle(f.x * CELL + CELL / 2, f.y * CELL, "#ffd75e");
+    }
+  }
+
+  if (kaijuActive) {
+    const t4 = performance.now() / 1000;
+    const kx = (MAP_W / 2 + Math.sin(t4 / 19) * (MAP_W / 2 - 40)) * CELL;
+    const ky = (MAP_H / 2 + Math.cos(t4 / 26) * (MAP_H / 2 - 40)) * CELL;
+    const sx = kx - camX;
+    const sy = ky - camY + Math.abs(Math.sin(t4 * 2.2)) * -14;
+    if (sx > -200 && sy > -200 && sx < w + 200 && sy < h + 200) {
+      const slime = sprites.critters["slime"];
+      if (slime) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+        ctx.beginPath();
+        ctx.ellipse(sx + CELL * 1.5, ky - camY + CELL * 2.9, CELL * 1.3, CELL * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.drawImage(slime, sx, sy, CELL * 3, CELL * 3);
+        ctx.font = '14px "DotGothic16", monospace';
+        ctx.fillStyle = "#e87aa0";
+        ctx.fillText("きょだいスライム", sx + 6, sy - 16);
+      }
+    }
+  }
+
   if (wedding) {
     if (performance.now() >= wedding.until) {
       wedding = null;
@@ -4055,11 +4116,14 @@ function applyGenome(g: NonNullable<Awaited<ReturnType<typeof loadGenome>>>): vo
     if (seen.has(m.id)) continue;
     seen.add(m.id);
     if (genomeVersionSeen > 0) extraExtra(`とつぜんへんい! 【${KIND_JA[m.kind] ?? m.kind}】${m.title}`);
+    if (genomeVersionSeen > 0 && m.kind === "omen") log.push("…ちへいせんの むこうに きょだいな カゲが うごいた!?");
   }
   localStorage.setItem("vouchquest.mutseen", JSON.stringify([...seen].slice(-50)));
 
   if (g.version > genomeVersionSeen && genomeVersionSeen > 0) log.push(`せかいが しんかした… (ゲノム v${g.version})`);
   else if (genomeVersionSeen === 0 && g.version > 0) log.push(`せかいの ことばが しんかしている… (ゲノム v${g.version})`);
+  const latestMut = g.mutations[g.mutations.length - 1];
+  kaijuActive = latestMut?.kind === "omen";
   genomeVersionSeen = g.version;
 }
 

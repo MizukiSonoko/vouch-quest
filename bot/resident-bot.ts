@@ -652,6 +652,17 @@ async function villagerAct(
     } else if (roll < 0.55 && neighbors.length > 0 && agent.balances.currency > 6) {
       const to = neighbors[Math.floor(rand() * neighbors.length)];
       if (to) say(agent.id, `pays ${to.id}`, await client.transfer(agent.id, to.id, 1 + Math.floor(rand() * 4)));
+    } else if (roll < 0.66 && agent.balances.currency >= 8) {
+      // Commerce: shop at a player-built stall in town — the buildings EARN.
+      const stallDeed = items.find(
+        (it) => /^bld(shop|market|neon|vision|greenhouse)/.test(it.kind) && !it.owner.startsWith("treasury@") && isPlayerAgent(it.owner) && (it.owner.split("@")[1] ?? "") === agent.region,
+      );
+      if (stallDeed) {
+        say(agent.id, `shops at ${stallDeed.owner}'s stall`, await client.transfer(agent.id, stallDeed.owner, 3 + Math.floor(rand() * 4)));
+      } else {
+        const to = neighbors[Math.floor(rand() * neighbors.length)];
+        if (to) say(agent.id, `chats up ${to.id}`, await client.vouch(agent.id, to.id, 1));
+      }
     } else if (roll < 0.7 && neighbors.length > 0) {
       const to = neighbors[Math.floor(rand() * neighbors.length)];
       if (to) say(agent.id, `chats up ${to.id}`, await client.vouch(agent.id, to.id, 1));
