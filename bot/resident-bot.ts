@@ -764,6 +764,39 @@ async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region
   await sleep(900);
 }
 
+// --- ghost-town consolidation ----------------------------------------------------
+// The guild-town boom left dozens of empty settlements. An owner who wakes to
+// find a town of theirs deserted (and it is not their own home) usually closes
+// it and puts it on the market cheap — fixer-uppers for the next generation.
+
+async function consolidateGhostTowns(w: { agents: Agent[]; regions: Region[] }): Promise<void> {
+  const genomeNames = new Set(loadGenomeProfs().map((pr) => pr.name));
+  const ghosts = w.regions.filter((r) => {
+    if (!r.owner || r.lifecycle !== "active" || r.id === AFTERLIFE) return false;
+    // Only towns whose owner's key WE hold: the troupe and the genome-born.
+    if (!(TROUPE as readonly string[]).includes(r.owner) && !genomeNames.has(r.owner)) return false;
+    if ((r as unknown as { salePrice?: number | null }).salePrice != null) return false;
+    const pop = w.agents.filter((x) => x.region === r.id && x.role !== "treasury").length;
+    const ownerLivesThere = w.agents.some((x) => x.region === r.id && bareName(x.id) === r.owner);
+    return pop === 0 && !ownerLivesThere;
+  });
+  for (const ghost of ghosts.slice(0, 2)) {
+    if (rand() >= 0.35) continue;
+    const owner = ghost.owner ?? "";
+    try {
+      const c = clientFor(owner);
+      await ensureRegistered(c, owner);
+      await c.lifecycle(owner, ghost.id, "dormant");
+      await sleep(600);
+      const ask = 25 + Math.floor(rand() * 50);
+      say(owner, `closes the ghost town ${ghost.id} and lists it for ${ask}G`, await c.list(owner, ghost.id, ask));
+      await sleep(900);
+    } catch (error) {
+      say(owner, "consolidation stumbled:", error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
 // --- responding to players ------------------------------------------------------
 // The villagers ANSWER what players do to them: a confession may be returned,
 // a delivered good is paid for, a get-well herb cures and earns thanks. A tiny
@@ -1003,4 +1036,5 @@ if (wakingProfs.length > 0) console.log(`genome-born about: ${wakingProfs.map((p
 for (const p of wakingProfs) await genomeAct(p, world);
 
 await honorEstateSales(world);
+await consolidateGhostTowns(world);
 await respondToPlayers(world);
