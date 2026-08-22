@@ -837,8 +837,8 @@ function saveMind(m: { answeredSeq: number; deposits: Deposit[] }): void {
 
 const KIND_PRICES: Record<string, number> = {
   herb: 8, torch: 12, tsubo: 15, shield: 30, sword: 45, gem: 80, crown: 150,
-  takara: 25, petslime: 30, petusagi: 35, mokuzai: 4, ishi: 4, tekko: 30, kin: 80, hanabi: 18, gakki: 22, dougubako: 55, sekiyu: 40, kikai: 150,
-  bread: 6, fish: 7, sakana: 7, yasai: 5, lantern: 12, rope: 8, boots: 14, tea: 10, brick: 9, gear: 16,
+  takara: 25, petslime: 30, petusagi: 35, mokuzai: 4, ishi: 4, tekko: 30, kin: 80, hanabi: 18, gakki: 22, dougubako: 55, sekiyu: 40, kikai: 150, komugi: 6, budo: 8, wain: 55, hagane: 70, tokei: 220,
+  bread: 12, fish: 7, sakana: 7, yasai: 5, lantern: 12, rope: 8, boots: 14, tea: 10, brick: 9, gear: 16,
 };
 
 function priceOf(kind: string): number {

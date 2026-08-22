@@ -1664,6 +1664,33 @@ function lineMenu(): void {
   );
 }
 
+/** The deed whose footprint covers (x, y), if any (any owner, not demolished). */
+function deedCovering(x: number, y: number): { kind: string; owner: string } | null {
+  if (!snapshot) return null;
+  const catalog = getBuildings();
+  for (const it of snapshot.items) {
+    const bm = /^bld([a-z]+)(\d+)x(\d+)$/.exec(it.kind);
+    if (!bm || it.owner.startsWith("treasury@")) continue;
+    const def = catalog[bm[1] ?? ""];
+    if (!def) continue;
+    const bx = Number(bm[2]);
+    const by = Number(bm[3]);
+    if (def.cells.some(([dx, dy]) => bx + dx === x && by + dy === y)) return { kind: bm[1] ?? "", owner: it.owner };
+  }
+  return null;
+}
+
+/** Is one of MY deeds of this building type within reach of the hero? */
+function nearOwnFacility(buildingType: string, reach = 6): boolean {
+  if (!snapshot?.me.agentId) return false;
+  for (const it of snapshot.items) {
+    const bm = new RegExp(`^bld${buildingType}(\\d+)x(\\d+)$`).exec(it.kind);
+    if (!bm || it.owner !== snapshot.me.agentId) continue;
+    if (Math.abs(Number(bm[1]) - player.x) <= reach && Math.abs(Number(bm[2]) - player.y) <= reach) return true;
+  }
+  return false;
+}
+
 function buildMenu(): void {
   if (!map || !snapshot) return;
   const me = heroAgent();
@@ -2354,11 +2381,15 @@ function fieldMenu(): void {
           }
         } else if (value === "craft") {
           const learned = journal().learned;
-          const RECIPES: readonly { out: string; label: string; needs: Readonly<Record<string, number>> }[] = [
+          const RECIPES: readonly { out: string; label: string; needs: Readonly<Record<string, number>>; near?: string; nearJa?: string }[] = [
             { out: "dougubako", label: "どうぐばこ (てっこう+もくざい)", needs: { tekko: 1, mokuzai: 1 } },
             { out: "gem", label: "ほうせき (きん+いし を みがく)", needs: { kin: 1, ishi: 1 } },
             { out: "lantern", label: "ランタン (てっこう+たいまつ)", needs: { tekko: 1, torch: 1 } },
-            { out: "kikai", label: "きかい (せきゆx2+てっこう) — じゅうこうぎょう", needs: { sekiyu: 2, tekko: 1 } },
+            { out: "bread", label: "パン (こむぎx2)", needs: { komugi: 2 }, near: "foodworks", nearJa: "かこうば" },
+            { out: "wain", label: "ワイン (ぶどうx2)", needs: { budo: 2 }, near: "foodworks", nearJa: "かこうば" },
+            { out: "hagane", label: "はがね (てっこうx2+いし)", needs: { tekko: 2, ishi: 1 }, near: "factory", nearJa: "こうじょう" },
+            { out: "kikai", label: "きかい (せきゆx2+てっこう)", needs: { sekiyu: 2, tekko: 1 }, near: "factory", nearJa: "こうじょう" },
+            { out: "tokei", label: "とけい (はがね+きん) — さいこうきゅうひん", needs: { hagane: 1, kin: 1 }, near: "factory", nearJa: "こうじょう" },
           ];
           const items = myItems();
           const canMake = (needs: Readonly<Record<string, number>>): boolean =>
@@ -2369,7 +2400,14 @@ function fieldMenu(): void {
             ui.push(
               new Menu("なにを つくる? (むらの おきてに したがう)", [
                 ...learned.map((k) => ({ label: `${kindName(k)}を つくる`, value: `mk:${k}` })),
-                ...RECIPES.map((r) => ({ label: `ごうせい: ${r.label}`, value: `rc:${r.out}`, disabled: !canMake(r.needs) })),
+                ...RECIPES.map((r) => {
+                  const facilityOk = !r.near || nearOwnFacility(r.near);
+                  return {
+                    label: `ごうせい: ${r.label}${r.near && !facilityOk ? ` (じぶんの ${r.nearJa}の ちかくで)` : ""}`,
+                    value: `rc:${r.out}`,
+                    disabled: !canMake(r.needs) || !facilityOk,
+                  };
+                }),
                 { label: "やめる", value: "cancel" },
               ], (choice) => {
                 if (choice === "cancel") return ui.clear();
@@ -2701,10 +2739,12 @@ function interact(): void {
         { label: "やめる", value: "cancel" },
       ], (v) => {
         if (v === "harvest") void (async () => {
-            await runAct({ kind: "forage", itemKind: "yasai" }, "しゅうかく");
-            await postAct({ kind: "forage", itemKind: "yasai" } as Record<string, unknown>);
+            const deed = deedCovering(fx, fy);
+            const crop = deed?.kind === "farmland" ? "komugi" : deed?.kind === "vineyard" ? "budo" : "yasai";
+            await runAct({ kind: "forage", itemKind: crop }, "しゅうかく");
+            await postAct({ kind: "forage", itemKind: crop } as Record<string, unknown>);
             await refreshWorld(false);
-            log.push("ほうさく! やさいを 2つ しゅうかくした。");
+            log.push(`ほうさく! ${kindName(crop)}を 2つ しゅうかくした。`);
           })();
         else ui.clear();
       }, () => ui.clear()),
