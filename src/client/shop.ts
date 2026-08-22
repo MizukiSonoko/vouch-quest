@@ -82,6 +82,19 @@ export function allWares(): readonly Ware[] {
   return [...CATALOG, ...EXTRA_WARES];
 }
 
+/** Base prices for the market board — kept in step with the bot's ledger. */
+export const BASE_PRICES: Readonly<Record<string, number>> = {
+  yasai: 5, sakana: 7, bread: 12, komugi: 6, budo: 8, wain: 55,
+  mokuzai: 4, ishi: 4, tekko: 30, kin: 80, sekiyu: 40,
+  hagane: 70, kikai: 150, tokei: 220, dougubako: 55, takara: 25,
+};
+
+/** Scarcity multiplier: fewer of a good in the world means dearer prices. */
+export function marketRate(kind: string, worldCount: number): number {
+  void kind;
+  return Math.max(0.6, Math.min(1.6, 1.6 - worldCount / 30));
+}
+
 const BLD_JA: Readonly<Record<string, string>> = { house: "いえ", shop: "みせ", garden: "はなばたけ", tower: "とう", tree: "き", field: "はたけ" };
 
 /** Parse a construction-deed kind (`bld<type><x>x<y>`), if it is one. */

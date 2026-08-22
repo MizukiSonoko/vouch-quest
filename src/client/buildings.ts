@@ -81,6 +81,8 @@ function generate(): Record<string, BuildingDef> {
   defs["vineyard"] = { label: "ぶどうえん (2x2)", fee: 12, category: "みせ・しごと", cells: [[0, 0, Tile.Farm], [1, 0, Tile.Flower], [0, 1, Tile.Flower], [1, 1, Tile.Farm]] };
   defs["factory"] = { label: "こうじょう (じゅうこうぎょう)", fee: 80, category: "みせ・しごと", cells: [[0, 0, Tile.BuildingRoof], [1, 0, Tile.BuildingRoof], [0, 1, Tile.BuildingWall], [1, 1, Tile.HouseDoor]], materials: { ishi: 2, tekko: 1 } };
   defs["foodworks"] = { label: "かこうば (しょくひん)", fee: 40, category: "みせ・しごと", cells: [[0, 0, Tile.RoofBrown], [1, 0, Tile.RoofBrown], [0, 1, Tile.WallWood], [1, 1, Tile.DoorWood]], materials: { mokuzai: 2 } };
+  defs["powerplant"] = { label: "みんかんはつでんしょ (むらに でんき)", fee: 120, category: "みせ・しごと", cells: [[0, 0, Tile.Plant]], materials: { kikai: 1 } };
+  defs["autofactory"] = { label: "じどうこうじょう (さんしゅつ2ばい)", fee: 150, category: "みせ・しごと", cells: [[0, 0, Tile.BuildingRoof], [1, 0, Tile.BuildingRoof], [0, 1, Tile.BuildingWall], [1, 1, Tile.HouseDoor]], materials: { kikai: 1 } };
   defs["orchard"] = { label: "かじゅえん", fee: 14, category: "みせ・しごと", cells: [[0, 0, Tile.Tree], [2, 0, Tile.Tree], [1, 1, Tile.Flower], [0, 2, Tile.Tree], [2, 2, Tile.Tree]] };
   defs["fishpond"] = { label: "つりぼり (2x2)", fee: 12, category: "みせ・しごと", cells: box(2, 2, Tile.Water) };
   defs["neon"] = { label: "ネオンかんばん", fee: 20, category: "みせ・しごと", cells: [[0, 0, Tile.Neon]] };

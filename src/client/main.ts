@@ -16,7 +16,7 @@ import { fetchAllLog, fetchWorld, postAct, postRegister } from "./net";
 import { classifyRegime, type GovernanceValue, lawLayer, lawText, municipalRank, REGIME_COLOR, REGIME_JA, REGIMES } from "./politics";
 import { foldProgress, GATE, LETTERS, type Progress } from "./progress";
 import { heroStats, heroTitle, type QuestContext, questProgress, titleTier } from "./quests";
-import { allWares, canShopHere, CATALOG, friendlyPairs, kindName, prefectures, registerKindNames, registerWares, STANCE_COLOR, STANCE_JA, stanceToward, type Ware } from "./shop";
+import { allWares, BASE_PRICES, canShopHere, CATALOG, friendlyPairs, kindName, marketRate, prefectures, registerKindNames, registerWares, STANCE_COLOR, STANCE_JA, stanceToward, type Ware } from "./shop";
 import { bgmEnabled, se, startAudio, toggleBgm } from "./sound";
 import { buildSprites, CELL } from "./sprites";
 import { drawText, drawWindow, Info, Menu, MessageLog, TextInput, UiStack } from "./ui";
@@ -2401,7 +2401,7 @@ function fieldMenu(): void {
               new Menu("なにを つくる? (むらの おきてに したがう)", [
                 ...learned.map((k) => ({ label: `${kindName(k)}を つくる`, value: `mk:${k}` })),
                 ...RECIPES.map((r) => {
-                  const facilityOk = !r.near || nearOwnFacility(r.near);
+                  const facilityOk = !r.near || nearOwnFacility(r.near) || (r.near === "factory" && nearOwnFacility("autofactory"));
                   return {
                     label: `ごうせい: ${r.label}${r.near && !facilityOk ? ` (じぶんの ${r.nearJa}の ちかくで)` : ""}`,
                     value: `rc:${r.out}`,
@@ -2427,6 +2427,11 @@ function fieldMenu(): void {
                     for (const it of held) await postAct({ kind: "transferItem", itemId: it.id, to: `treasury@${home}` });
                   }
                   await runAct({ kind: "forage", itemKind: recipe.out }, `ごうせい: ${kindName(recipe.out)}`);
+                  if (recipe.near === "factory" && nearOwnFacility("autofactory")) {
+                    await postAct({ kind: "forage", itemKind: recipe.out } as Record<string, unknown>);
+                    await refreshWorld(false);
+                    log.push("じどうこうじょうが うなりを あげ、もう ひとつ できあがった!");
+                  }
                   extraExtra(`かこう せいこう! ${kindName(recipe.out)}が できあがった!`);
                 })();
               }, () => ui.clear()),
@@ -3013,6 +3018,20 @@ class EconomyOverlay {
       c.fillStyle = "#c9d4e8";
       c.fillText(labels[i] ?? "", x + 360 + i * 34, y + 172);
     }
+
+    // ---- そうば: scarcity-priced market board ----
+    drawText(c, "そうば (せかいの ざいこで へんどう)", x + 620, y + 96, "#8fd0ff");
+    c.font = '13px "DotGothic16", monospace';
+    const GOODS = ["yasai", "bread", "wain", "tekko", "sekiyu", "hagane", "kikai", "tokei"];
+    GOODS.forEach((gk, i) => {
+      const count = snapshot?.items.filter((i2) => i2.kind.replace(/\d+$/, "") === gk).length ?? 0;
+      const base = BASE_PRICES[gk] ?? 5;
+      const rate = marketRate(gk, count);
+      const px4 = Math.round(base * rate);
+      c.fillStyle = rate > 1.2 ? "#ff9d9d" : rate < 0.8 ? "#9dc8ff" : "#ffffff";
+      c.fillText(`${kindName(gk)} ${px4}G ${rate > 1.2 ? "▲品薄" : rate < 0.8 ? "▼だぶつき" : ""}`, x + 620, y + 118 + i * 18);
+    });
+    c.font = '15px "DotGothic16", monospace';
 
     // ---- village treasuries ----
     c.font = '15px "DotGothic16", monospace';

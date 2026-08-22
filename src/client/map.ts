@@ -1127,6 +1127,18 @@ export function buildMap(snapshot: Snapshot): WorldMap {
   }
   for (const pv of plants) pv.powered = true; // the plant powers its own city
 
+  // みんかんはつでんしょ: a player-built plant powers the village around it —
+  // industry answering the blackout problem with private capital.
+  for (const item of snapshot.items) {
+    const pm = /^bldpowerplant(\d+)x(\d+)$/.exec(item.kind);
+    if (!pm || item.owner.startsWith("treasury@")) continue;
+    const px3 = Number(pm[1]);
+    const py3 = Number(pm[2]);
+    for (const v of villages) {
+      if (villageContains(v, px3, py3)) v.powered = true;
+    }
+  }
+
   return { tiles, villages, rails, subways, roads, highways, powerLines };
 }
 

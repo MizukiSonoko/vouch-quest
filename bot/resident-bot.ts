@@ -841,6 +841,11 @@ const KIND_PRICES: Record<string, number> = {
   bread: 12, fish: 7, sakana: 7, yasai: 5, lantern: 12, rope: 8, boots: 14, tea: 10, brick: 9, gear: 16,
 };
 
+function scarcityRate(kind: string, items: readonly Item[]): number {
+  const count = items.filter((it) => it.kind.replace(/\d+$/, "") === kind).length;
+  return Math.max(0.6, Math.min(1.6, 1.6 - count / 30));
+}
+
 function priceOf(kind: string): number {
   if (KIND_PRICES[kind] !== undefined) return KIND_PRICES[kind];
   try {
@@ -931,7 +936,7 @@ async function respondToPlayers(w: { agents: Agent[]; regions: Region[]; items: 
           if (me.balances.currency >= 3) say(to, `thanks ${from} for the visit`, await c.transfer(to, from, 3));
         } else {
           // 納品: pay the fair price plus a thank-you margin.
-          const pay = Math.min(priceOf(kind) + 2, me.balances.currency);
+          const pay = Math.min(Math.round(priceOf(kind) * scarcityRate(kind, w.items)) + 2, me.balances.currency);
           if (pay >= 1) say(to, `pays ${from} for the ${kind}`, await c.transfer(to, from, pay));
         }
         acted++;
