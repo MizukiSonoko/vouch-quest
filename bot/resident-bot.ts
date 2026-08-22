@@ -588,9 +588,53 @@ async function act(
 
 // --- villager citizens: every bot-born settler and child lives a full life ------
 
+// --- the labour market ----------------------------------------------------------
+// A villager paid >=10G by a player this era considers themselves HIRED: on
+// waking they work one of the employer's production deeds and mint the product
+// straight into the employer's hands (the town's minting law is the labour law).
+
+const ERA_SPAN2 = 500;
+
+function employerOf(agentId: string, events: readonly LogEvent[]): string | null {
+  const logLen = events.length > 0 ? (events[events.length - 1]?.seq ?? 0) + 1 : 0;
+  const eraStart = Math.floor(logLen / ERA_SPAN2) * ERA_SPAN2;
+  let boss: string | null = null;
+  for (const e of events) {
+    if (e.seq < eraStart || e.type !== "economy.settled") continue;
+    const entries = (e.payload["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+    const meGot = entries.find((x) => x.agentId === agentId && (x.currencyDelta ?? 0) >= 10);
+    const payer = entries.find((x) => x.agentId && (x.currencyDelta ?? 0) < 0 && !x.agentId.startsWith("treasury@"));
+    if (meGot && payer?.agentId && isPlayerAgent(payer.agentId)) boss = payer.agentId;
+  }
+  return boss;
+}
+
+const WORKS: readonly (readonly [RegExp, string, string])[] = [
+  [/^bldderrick/, "sekiyu", "pumps oil"],
+  [/^bld(factory|autofactory)/, "hagane", "smelts steel"],
+  [/^bldfoodworks/, "bread", "bakes bread"],
+  [/^bldvineyard/, "budo", "picks grapes"],
+  [/^bldfarmland/, "komugi", "reaps wheat"],
+  [/^bldfield/, "yasai", "tends the field"],
+];
+
+async function workShift(agent: Agent, client: VouchClient, events: readonly LogEvent[], items: readonly Item[]): Promise<boolean> {
+  const boss = employerOf(agent.id, events);
+  if (!boss || rand() > 0.5) return false;
+  const workplaces = items.filter((it) => it.owner === boss && WORKS.some(([re]) => re.test(it.kind)));
+  const site = workplaces[Math.floor(rand() * workplaces.length)];
+  if (!site) return false;
+  const work = WORKS.find(([re]) => re.test(site.kind));
+  if (!work) return false;
+  const [, product, verb] = work;
+  say(agent.id, `${verb} for ${boss}`, await client.mintItem(agent.id, `${product}${Math.random().toString(36).slice(2, 7)}`, product, boss));
+  await sleep(900);
+  return true;
+}
+
 async function villagerAct(
   agent: Agent,
-  world: { agents: Agent[]; regions: Region[]; ledger: Map<string, number>; edges: Set<string>; logLen: number; items: Item[] },
+  world: { agents: Agent[]; regions: Region[]; ledger: Map<string, number>; edges: Set<string>; logLen: number; items: Item[]; events: LogEvent[] },
 ): Promise<void> {
   const client = clientFor(agent.id);
   await ensureRegistered(client, agent.id);
@@ -600,6 +644,9 @@ async function villagerAct(
   const myByoki = items.find((it) => it.owner === agent.id && it.kind === BYOKI);
 
   try {
+    // A hired hand puts in their shift before anything else.
+    if (await workShift(agent, client, world.events, items)) return;
+
     // Democracy breathes: eligibility rides the proposal's SNAPSHOT roll, not
     // residence — so a citizen who wakes votes on ANY open proposal that still
     // carries their name, wherever they live now. Proposals resolve instead of

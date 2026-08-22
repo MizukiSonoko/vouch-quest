@@ -876,6 +876,7 @@ function npcMenu(mob: Mob): void {
         { label: "ほしいものを きく", value: "want" },
         { label: "おみまいする (やくそう)", value: "care", disabled: !snapshot?.items.some((i) => i.owner === a.id && i.kind === BYOKI) || !myItems().some((i) => i.kind === "herb") },
         { label: `でしいりする (10G)${gateTag("apprentice")}`, value: "apprentice", disabled: !gateOk("apprentice") || !genomeProfOf(a.id) },
+        { label: `やとう (10G — ひとじだい はたらいてもらう)${gateTag("craft")}`, value: "hire", disabled: !gateOk("craft") },
         { label: `よきんする (りそく10%)${gateTag("deposit")}`, value: "deposit", disabled: !gateOk("deposit") || (a.id.split("@")[0] ?? "") !== "Ginko" },
         { label: "どうぐを わたす", value: "item", disabled: items.length === 0 },
         { label: "やめる", value: "cancel" },
@@ -952,6 +953,21 @@ function npcMenu(mob: Mob): void {
                   log.push("ぎんこういん Ginkoは ちょうめんに きちんと かきこんだ。");
                 });
               } else ui.clear();
+            }, () => ui.clear()),
+          );
+        } else if (value === "hire") {
+          ui.push(
+            new Menu(`${a.id.split("@")[0]}を やとう? (10G / このじだいの あいだ)`, [
+              { label: "やとう", value: "yes" },
+              { label: "やめる", value: "cancel" },
+            ], (v) => {
+              if (v === "yes") {
+                void runAct({ kind: "transfer", to: a.id, amount: 10 }, "ちんぎんを はらう").then(() => {
+                  log.push(`${a.id.split("@")[0]}は うでまくりをした。「まかせておくんな!」`);
+                  log.push("(あなたの さいゆき・こうじょう・はたけで はたらいて、さんぶつを おさめてくれる)");
+                });
+              }
+              ui.clear();
             }, () => ui.clear()),
           );
         } else if (value === "apprentice") {
