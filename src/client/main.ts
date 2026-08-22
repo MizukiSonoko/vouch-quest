@@ -2127,6 +2127,60 @@ function drawCaravans(camX: number, camY: number): void {
   }
 }
 
+/** けいえいちょう: the hero's profit & loss, folded per era from the log —
+ * the Simutrans finance window in DQ clothing. */
+function businessLedger(): string[] {
+  const heroId = snapshot?.me.agentId;
+  if (!heroId) return ["まだ しょうばいを はじめていない。"];
+  const ERA = 500;
+  const eras = 8;
+  const logLen = snapshot?.logLength ?? 0;
+  const eraNow = Math.floor(logLen / ERA);
+  const income: number[] = Array.from({ length: eras }, () => 0);
+  const toTreasury: number[] = Array.from({ length: eras }, () => 0);
+  const toPeople: number[] = Array.from({ length: eras }, () => 0);
+  for (const e of allEvents) {
+    if (e.type !== "economy.settled") continue;
+    const idx = Math.floor(e.seq / ERA) - (eraNow - eras + 1);
+    if (idx < 0 || idx >= eras) continue;
+    const entries = (e.payload["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+    const mine = entries.find((x) => x.agentId === heroId);
+    if (!mine || typeof mine.currencyDelta !== "number" || mine.currencyDelta === 0) continue;
+    if (mine.currencyDelta > 0) income[idx] = (income[idx] ?? 0) + mine.currencyDelta;
+    else {
+      const treasuryGot = entries.find((x) => x.agentId?.startsWith("treasury@") && (x.currencyDelta ?? 0) > 0);
+      if (treasuryGot && Math.abs(mine.currencyDelta) - (entries.find((x2) => x2.agentId !== heroId && !x2.agentId?.startsWith("treasury@") && (x2.currencyDelta ?? 0) > 0)?.currencyDelta ?? 0) > 0) {
+        toTreasury[idx] = (toTreasury[idx] ?? 0) + Math.abs(mine.currencyDelta);
+      } else {
+        toPeople[idx] = (toPeople[idx] ?? 0) + Math.abs(mine.currencyDelta);
+      }
+    }
+  }
+  const BARS = "▁▂▃▄▅▆▇█";
+  const spark = (xs: number[]): string => {
+    const max = Math.max(1, ...xs);
+    return xs.map((v) => BARS[Math.min(7, Math.floor((v / max) * 7.99))] ?? "▁").join("");
+  };
+  const net = income.map((v, i) => v - (toTreasury[i] ?? 0) - (toPeople[i] ?? 0));
+  const items = myItems();
+  const deeds = items.filter((i2) => i2.kind.startsWith("bld"));
+  const lines2 = items.filter((i2) => i2.kind.startsWith("line"));
+  const shops = deeds.filter((i2) => /^bld(shop|market|neon|vision|greenhouse)/.test(i2.kind));
+  const hero = heroAgent();
+  return [
+    `～ この ${eras}じだいの けいえい ～`,
+    `うけとり  ${spark(income)}  (こんき ${income[eras - 1] ?? 0}G)`,
+    `おおやけへ ${spark(toTreasury)}  (ぜい・きふ・ざいりょう こんき ${toTreasury[eras - 1] ?? 0}G)`,
+    `ひとへ    ${spark(toPeople)}  (しいれ・おくりもの こんき ${toPeople[eras - 1] ?? 0}G)`,
+    `じゅんえき ${net.map((v) => (v >= 0 ? "+" : "-")).join("")}  (こんき ${net[eras - 1] ?? 0}G)`,
+    "",
+    "～ しさん ～",
+    `げんきん ${hero?.balances.currency ?? 0}G / どうぐ ${items.length}こ`,
+    `たてもの ${deeds.length}けん (うち みせ ${shops.length}けん) / ろせん ${lines2.length}ほん`,
+    shops.length > 0 ? "みせは むらびとが かってに かいものしてくれる。" : "みせを たてれば るすでも あがりが はいる。",
+  ];
+}
+
 function worldMilestones(): Milestone[] {
   let admitted = 0;
   let deaths = 0;
@@ -2246,6 +2300,7 @@ function fieldMenu(): void {
         { label: "つよさ", value: "status" },
         { label: "クエスト", value: "quests" },
         { label: "いらいのふだ (いま できること)", value: "requests" },
+        { label: "けいえいちょう (しゅうし・しさん)", value: "ledger" },
         { label: "できることずかん (C)", value: "compendium" },
         { label: "どうぐ", value: "items" },
         { label: `ものづくり (ならったわざ)${gateTag("craft")}`, value: "craft", disabled: !gateOk("craft") },
@@ -2372,6 +2427,8 @@ function fieldMenu(): void {
               }, () => ui.clear()),
             );
           }
+        } else if (value === "ledger") {
+          ui.push(new Info("けいえいちょう", businessLedger(), () => ui.pop()));
         } else if (value === "compendium") {
           compendium();
         } else if (value === "requests") {
@@ -2906,6 +2963,8 @@ class EconomyOverlay {
 
 class MapOverlay {
   private sel = 0;
+  private replayAt: number | null = null;
+  private replayStart = 0;
 
   constructor(private readonly onClose: () => void) {
     // Start the cursor on the hero's home town.
@@ -2958,6 +3017,13 @@ class MapOverlay {
       );
       return;
     }
+    if (key === "t" || key === "T") {
+      // タイムラプス: replay the recent past at high speed.
+      this.replayAt = Math.max(0, allEvents.length - 400);
+      this.replayStart = performance.now();
+      se("confirm");
+      return;
+    }
     if (["Escape", "m", "M", "x"].includes(key)) this.onClose();
   }
 
@@ -2968,7 +3034,7 @@ class MapOverlay {
     const x = (width - w) / 2;
     const y = (height - h) / 2;
     drawWindow(c, x, y, w, h);
-    drawText(c, "せかい ライブビュー — やじるし: まちをえらぶ / Enter: てをうつ", x + 24, y + 14, "#ffd75e");
+    drawText(c, "せかい ライブビュー — やじるし: まち / Enter: てをうつ / T: タイムラプス", x + 24, y + 14, "#ffd75e");
     const ox = x + 24;
     const oy = y + 46;
     const now4 = performance.now();
@@ -3072,6 +3138,41 @@ class MapOverlay {
     if (Math.floor(now4 / 300) % 2 === 0) {
       c.fillStyle = "#ffffff";
       c.fillRect(ox + player.x * MINI_SCALE - 2, oy + player.y * MINI_SCALE - 2, MINI_SCALE + 4, MINI_SCALE + 4);
+    }
+    // タイムラプス: recent history flashes across the continent in order.
+    if (this.replayAt !== null) {
+      const RATE = 40; // events per second
+      const shown = Math.floor(((now4 - this.replayStart) / 1000) * RATE);
+      const start = Math.max(0, allEvents.length - 400);
+      const upto = Math.min(allEvents.length, start + shown);
+      let pop2 = 0;
+      for (let i = start; i < upto; i++) {
+        const e2 = allEvents[i];
+        if (!e2) continue;
+        if (e2.type === "agent.admitted") pop2++;
+        const age = upto - i;
+        if (age > 30) continue;
+        const rid =
+          (e2.payload["admission"] as Record<string, unknown> | undefined)?.["region"] ??
+          e2.payload["toRegion"] ??
+          e2.payload["regionId"] ??
+          ((e2.payload["entries"] as { agentId?: string }[] | undefined)?.[0]?.agentId ?? (typeof e2.payload["owner"] === "string" ? e2.payload["owner"] : ""))
+            ?.toString()
+            .split("@")[1];
+        const v2 = map.villages.find((x2) => x2.regionId === rid);
+        if (!v2) continue;
+        const color =
+          e2.type === "agent.admitted" ? "#3fd05e" : e2.type === "economy.settled" ? "#ffd75e" : e2.type === "agent.vouched" ? "#ff9de2" : e2.type === "item.minted" ? "#e8963c" : e2.type === "agent.migrated" ? "#8fd0ff" : "#e8e8e8";
+        c.globalAlpha = Math.max(0.1, 1 - age / 30);
+        c.fillStyle = color;
+        c.fillRect(mx(v2.x + v2.w / 2) - 2, my(v2.y + v2.h / 2) - 2, 5, 5);
+        c.globalAlpha = 1;
+      }
+      c.font = '15px "DotGothic16", monospace';
+      c.fillStyle = "#ffd75e";
+      const ev2 = allEvents[Math.max(start, upto - 1)];
+      c.fillText(`⏩ タイムラプス — できごと ${ev2?.seq ?? 0} / うまれた たみ +${pop2}`, ox, oy - 14);
+      if (upto >= allEvents.length) this.replayAt = null;
     }
     const selV = map.villages[this.sel];
     if (selV) {
