@@ -972,7 +972,12 @@ function npcMenu(mob: Mob): void {
             new Menu(
               "どの どうぐを わたす?",
               items.map((i) => ({ label: `${kindName(i.kind)} (${i.id})`, value: i.id })),
-              (itemId) => void runAct({ kind: "transferItem", itemId, to: a.id }, `どうぐを わたす`),
+              (itemId) => {
+                const isKoi = myItems().find((i2) => i2.id === itemId)?.kind.startsWith("koi") ?? false;
+                void runAct({ kind: "transferItem", itemId, to: a.id }, isKoi ? "こいぶみを わたす" : "どうぐを わたす").then(() => {
+                  if (isKoi) log.push(`${a.id.split("@")[0]}は かおを あからめて うけとった…! (へんじは めざめてから)`);
+                });
+              },
               () => ui.pop(),
             ),
           );

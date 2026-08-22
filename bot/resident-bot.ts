@@ -700,7 +700,7 @@ function loadGenomeProfs(): GenomeProf[] {
         out.push({ name, role, craft });
       }
     }
-    return out.slice(0, 40);
+    return out.slice(0, 60);
   } catch {
     return [];
   }
@@ -872,7 +872,12 @@ async function respondToPlayers(w: { agents: Agent[]; regions: Region[]; items: 
         const kind = item?.kind ?? itemId.replace(/[0-9a-z]{6}$/, "");
         const c = clientFor(to);
         await ensureRegistered(c, to);
-        if (kind === "herb") {
+        if (kind.startsWith("koi")) {
+          // こいふだ: a love letter. The heart usually answers, and loudly.
+          if (rand() < 0.9) {
+            say(to, `blushes at ${from}'s love letter`, await c.vouch(to, from, 3));
+          }
+        } else if (kind === "herb") {
           // お見舞い: the herb works — the patient recovers and pays a small thanks.
           const myByoki = w.items.find((it) => it.owner === to && it.kind === BYOKI);
           if (myByoki) {

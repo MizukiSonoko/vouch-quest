@@ -255,7 +255,7 @@ function merge(genome: Genome, add: Additions): { genome: Genome; grown: string[
     if (
       okName(p.name) && (p.role === "artisan" || p.role === "merchant" || p.role === "broker") &&
       okKind(p.craft) && okShort(p.greeting, 64) &&
-      !genome.professions.some((x) => x.name === p.name) && genome.professions.length < 40
+      !genome.professions.some((x) => x.name === p.name) && genome.professions.length < 60
     ) {
       genome.professions.push({ name: p.name, role: p.role, craft: p.craft, greeting: p.greeting });
       grown.push(`profession:${p.name}`);
