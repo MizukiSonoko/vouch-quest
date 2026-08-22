@@ -86,6 +86,8 @@ export function parseBuilding(kind: string): { type: string; name: string; x: nu
 
 /** Display name for any item kind — catalog names for wares, the raw kind otherwise. */
 export function kindName(kind: string): string {
+  const line = /^line(rail|road)(\d+)x(\d+)x(\d+)x(\d+)$/.exec(kind);
+  if (line) return `${line[1] === "rail" ? "てつどう" : "かいどう"}ろせんの けんりしょ (${line[2]},${line[3]})↔(${line[4]},${line[5]})`;
   const bld = parseBuilding(kind);
   if (bld) return `${bld.name}の けんりしょ (${bld.x},${bld.y})`;
   const base = kind.replace(/\d+$/, "");

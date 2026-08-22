@@ -1582,6 +1582,63 @@ const JUNK_KINDS = new Set(["kuzutetsu", "nisegane", "garakuta"]);
  * The catalog has dozens of structures; pick a shelf, then a thing. */
 const BUILDABLE_TILES: ReadonlySet<Tile> = new Set([Tile.Grass, Tile.Grass2, Tile.Flower, Tile.Sand, Tile.Snow, Tile.Swamp, Tile.Path]);
 
+/** ろせん: pick two towns, pay in coin and metal, and a line YOU own is laid —
+ * a train (or trucks) runs it forever. Simutrans, sealed in a deed. */
+function lineMenu(): void {
+  if (!map || !snapshot) return;
+  const me = heroAgent();
+  if (!me) {
+    ui.push(new Info("ろせん", ["まずは どこかの むらに すもう。"], () => ui.pop()));
+    return;
+  }
+  const towns = map.villages;
+  const items = myItems();
+  const railOk = items.filter((i2) => i2.kind === "tekko").length >= 2;
+  const roadOk = items.filter((i2) => i2.kind === "ishi").length >= 2;
+  const gold = me.balances.currency;
+  ui.push(
+    new Menu("どんな ろせんを ひく?", [
+      { label: `てつどうろせん — 40G + てっこうx2 (れっしゃが はしる)`, value: "rail", disabled: gold < 40 || !railOk },
+      { label: `かいどう — 20G + いしx2 (トラックが はしる)`, value: "road", disabled: gold < 20 || !roadOk },
+      { label: "やめる", value: "cancel" },
+    ], (ltype) => {
+      if (ltype === "cancel") return ui.clear();
+      ui.push(
+        new Menu("どの まちから?", [
+          ...towns.slice(0, 12).map((v) => ({ label: `${v.displayName}${municipalRank(v.tier)}`, value: v.regionId })),
+          { label: "やめる", value: "cancel" },
+        ], (fromId) => {
+          if (fromId === "cancel") return ui.clear();
+          ui.push(
+            new Menu("どの まちへ?", [
+              ...towns.filter((v) => v.regionId !== fromId).slice(0, 12).map((v) => ({ label: `${v.displayName}${municipalRank(v.tier)}`, value: v.regionId })),
+              { label: "やめる", value: "cancel" },
+            ], (toId) => {
+              if (toId === "cancel") return ui.clear();
+              const va = towns.find((v) => v.regionId === fromId);
+              const vb = towns.find((v) => v.regionId === toId);
+              if (!va || !vb) return ui.clear();
+              const fee = ltype === "rail" ? 40 : 20;
+              const mat = ltype === "rail" ? "tekko" : "ishi";
+              void (async () => {
+                const home = snapshot?.me.agentId?.split("@")[1] ?? "";
+                for (const it of myItems().filter((i2) => i2.kind === mat).slice(0, 2)) {
+                  await postAct({ kind: "transferItem", itemId: it.id, to: `treasury@${home}` });
+                }
+                await runAct(
+                  { kind: "buildLine", ltype, x1: va.gate[0], y1: va.gate[1] + 2, x2: vb.gate[0], y2: vb.gate[1] + 2, fee },
+                  `${va.displayName}と ${vb.displayName}を むすぶ`,
+                );
+                extraExtra(`かいつう! ${va.displayName}${ltype === "rail" ? "せん" : "かいどう"}が ひらいた!`);
+              })();
+            }, () => ui.clear()),
+          );
+        }, () => ui.clear()),
+      );
+    }, () => ui.clear()),
+  );
+}
+
 function buildMenu(): void {
   if (!map || !snapshot) return;
   const me = heroAgent();
@@ -1680,6 +1737,7 @@ const VERBS: readonly string[] = [
   "しゃしんをとる (P)", "ぼうえんきょうで のぞく (T)", "にっきを かく (N)", "にっきを よみかえす",
   "おじぎする (1)", "ばんざいする (2)", "ハートを おくる (3)", "はなびを あげる", "がっきを かなでる", "ごはんを たべる",
   "きを きる", "いしを ほる", "こうどうに もぐる", "こうせきを ほりあてる", "たてものを かいたいする", "まちのなやみを かいけつする", "RCI需要を よむ",
+  "てつどうろせんを ひく", "かいどうを ひく", "ろせんを ゆずる/かいたいする", "ごうせいで かこうする", "こうえきろせんずを ながめる",
 ];
 
 /** 機能: the SYSTEMS that run this world, named and counted. */
@@ -2167,6 +2225,7 @@ function fieldMenu(): void {
         { label: "どうぐ", value: "items" },
         { label: `ものづくり (ならったわざ)${gateTag("craft")}`, value: "craft", disabled: !gateOk("craft") },
         { label: "けんちく (めのまえに たてる)", value: "build" },
+        { label: `ろせんを ひく (てつどう・かいどう)${gateTag("buildCivic")}`, value: "line", disabled: !gateOk("buildCivic") },
         { label: `だいどうげいをする${gateTag("perform")}`, value: "perform", disabled: !gateOk("perform") },
         { label: `こどもを むかえる${gateTag("child")}`, value: "child", disabled: !gateOk("child") },
         { label: "ちず (M)", value: "map" },
@@ -2255,6 +2314,8 @@ function fieldMenu(): void {
           }
         } else if (value === "build") {
           buildMenu();
+        } else if (value === "line") {
+          lineMenu();
         } else if (value === "perform") {
           void runAct({ kind: "forage", itemKind: "daidogei" }, "だいどうげい").then(() => {
             particles.firework(player.x, player.y - 1);

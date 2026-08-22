@@ -1059,6 +1059,37 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     if (path.length > 3) rails.push(path);
   }
 
+  // Player transport lines: a `line<rail|road><x1>x<y1>x<x2>x<y2>` deed lays a
+  // REAL line — track on land, viaduct over water — and a vehicle runs it
+  // forever. Surrendered deeds (owner = treasury) fall silent, like buildings.
+  for (const item of snapshot.items) {
+    const lm = /^line(rail|road)(\d+)x(\d+)x(\d+)x(\d+)$/.exec(item.kind);
+    if (!lm || item.owner.startsWith("treasury@")) continue;
+    const [x1, y1, x2, y2] = [Number(lm[2]), Number(lm[3]), Number(lm[4]), Number(lm[5])];
+    const isRail = lm[1] === "rail";
+    const path: (readonly [number, number])[] = [];
+    const lay = (x: number, y: number): void => {
+      path.push([x, y] as const);
+      if (x < 2 || y < 2 || x >= MAP_W - 2 || y >= MAP_H - 2) return;
+      const t = tiles[y * MAP_W + x] ?? Tile.Grass;
+      if (SOLID.has(t as Tile) && t !== Tile.Water && t !== Tile.Tree && t !== Tile.SnowTree) return; // never break buildings
+      const over = t === Tile.Water;
+      if (isRail) set(tiles, x, y, over ? Tile.RailElevated : Tile.Rail);
+      else set(tiles, x, y, over ? Tile.RoadElevated : Tile.Pavement);
+    };
+    const sdx = Math.sign(x2 - x1) || 1;
+    for (let x = x1; x !== x2; x += sdx) lay(x, y1);
+    const sdy = Math.sign(y2 - y1) || 1;
+    for (let y = y1; y !== y2 + sdy; y += sdy) {
+      lay(x2, y);
+      if (y === y2) break;
+    }
+    if (path.length > 3) {
+      if (isRail) rails.push(path);
+      else highways.push(path);
+    }
+  }
+
   // The grid: each substation connects to the nearest plant within range.
   const RANGE = 70;
   const powerLines: (readonly [readonly [number, number], readonly [number, number]])[] = [];

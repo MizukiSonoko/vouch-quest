@@ -44,6 +44,15 @@ export const actionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("amendEconomy"), regionId, baseCostRate: z.number().min(0).max(1) }),
   z.object({ kind: z.literal("proposeEconomy"), regionId, baseCostRate: z.number().min(0).max(1) }),
   z.object({
+    kind: z.literal("buildLine"),
+    ltype: z.enum(["rail", "road"]),
+    x1: z.number().int().min(2).max(357),
+    y1: z.number().int().min(2).max(237),
+    x2: z.number().int().min(2).max(357),
+    y2: z.number().int().min(2).max(237),
+    fee: z.number().int().min(0).max(200),
+  }),
+  z.object({
     kind: z.literal("build"),
     structure: z.string().regex(/^[a-z]{2,20}$/),
     x: z.number().int().min(2).max(357),
@@ -235,6 +244,20 @@ export async function dispatchAction(wallet: BrowserWallet, hero: Hero, action: 
       // Buying is a trust trade: pay the asking price to the owner's agent; the
       // owner (bot owners watch the log) signs the handover on their next waking.
       return asAgent(wallet, hero, (agent) => ({ kind: "transfer", from: agent, to: action.ownerAgent, amount: action.price }));
+    case "buildLine": {
+      if (!hero.agentId) return { ok: false, reason: "no-agent: found or join a village first" };
+      const home = hero.agentId.split("@")[1] ?? "";
+      const regions = (await reads.regions()) as RegionView[];
+      const minting = regions.find((r) => r.id === home)?.institutions.itemPolicy.minting ?? "owner";
+      const itemKind = `line${action.ltype}${action.x1}x${action.y1}x${action.x2}x${action.y2}`;
+      const command = { kind: "mint-item", itemId: newItemId("line"), itemKind, owner: hero.agentId };
+      const minted = minting === "owner" ? await asOwner(wallet, hero, command) : await asAgent(wallet, hero, () => command);
+      if (!minted.ok) return minted;
+      if (action.fee > 0) {
+        await asAgent(wallet, hero, (agent) => ({ kind: "transfer", from: agent, to: `treasury@${home}`, amount: action.fee }));
+      }
+      return minted;
+    }
     case "build": {
       // A building IS an item: `bld<type><x>x<y>`, minted under the builder's
       // home minting law — the town's construction-permit institution.

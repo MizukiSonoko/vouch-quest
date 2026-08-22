@@ -199,3 +199,25 @@ describe("player constructions (bld deeds)", () => {
     expect(tileAt(m, 0, 0)).toBe(Tile.Water);
   });
 });
+
+describe("player transport lines", () => {
+  const { buildMap, Tile, tileAt } = require("../src/client/map");
+  const region2 = (id: string) => ({
+    id, displayName: id, owner: "Rei", status: "unrecognized", lifecycle: "active", foundedAtSeq: 1, salePrice: null,
+    institutions: { governance: { kind: "dictatorship" }, itemPolicy: { minting: "anyone" }, economyPolicy: { baseCostRate: 0.2, minCostRate: 0.05 }, diplomacyPolicy: { defaultStance: "reexamine", overrides: {} } },
+    openProposal: null,
+  });
+  test("a rail deed lays track and a train line; a surrendered deed falls silent", () => {
+    const mk = (owner: string) => ({
+      regions: [region2("asahi")], agents: [],
+      items: [{ id: "l1", kind: "linerail60x60x160x120", owner }],
+      me: { heroName: "Rei", registered: true, agentId: "Rei@asahi" }, logLength: 0,
+    });
+    const live = buildMap(mk("Rei@asahi"));
+    const laid = [...Array(90)].filter((_, i) => tileAt(live, 60 + i, 60) === Tile.Rail || tileAt(live, 60 + i, 60) === Tile.RailElevated).length;
+    expect(laid).toBeGreaterThan(40);
+    const before = buildMap(mk("treasury@asahi"));
+    const silent = [...Array(90)].filter((_, i) => tileAt(before, 60 + i, 60) === Tile.Rail).length;
+    expect(silent).toBeLessThan(laid);
+  });
+});

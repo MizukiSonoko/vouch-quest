@@ -124,7 +124,7 @@ export function foldProgress(events: readonly LogEventView[], heroAgentId: strin
     } else if (e.type === "item.minted") {
       if (p["owner"] === heroAgentId) {
         const kind = typeof p["kind"] === "string" ? (p["kind"] as string) : "";
-        if (kind.startsWith("bld")) {
+        if (kind.startsWith("bld") || kind.startsWith("line")) {
           builds++;
           if (inEra) eraCounts["build"] = (eraCounts["build"] ?? 0) + 1;
         } else {
