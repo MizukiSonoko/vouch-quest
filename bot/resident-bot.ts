@@ -699,6 +699,13 @@ async function villagerAct(
     } else if (roll < 0.55 && neighbors.length > 0 && agent.balances.currency > 6) {
       const to = neighbors[Math.floor(rand() * neighbors.length)];
       if (to) say(agent.id, `pays ${to.id}`, await client.transfer(agent.id, to.id, 1 + Math.floor(rand() * 4)));
+    } else if (agent.balances.currency >= 200 && neighbors.some((n) => n.balances.currency < 10) && rand() < 0.4) {
+      // おうごんのぎむ: great wealth beside great want moves the hand — alms,
+      // freely given, are how this society answers its own inequality.
+      const poorest = [...neighbors].sort((n1, n2) => n1.balances.currency - n2.balances.currency)[0];
+      if (poorest) {
+        say(agent.id, `gives alms to ${poorest.id}`, await client.transfer(agent.id, poorest.id, 8 + Math.floor(rand() * 12)));
+      }
     } else if (roll < 0.66 && agent.balances.currency >= 8) {
       // Commerce: shop at a player-built stall in town — the buildings EARN.
       const stallDeed = items.find(

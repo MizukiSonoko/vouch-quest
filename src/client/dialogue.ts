@@ -113,7 +113,7 @@ export function npcLines(
 
   const gold = agent.balances.currency;
   if (gold < 10) lines.push(pick(`${seed}p`, ["さいきん ふところが さむくてね…", "だれか めぐんでは くれんかのう。", "きょうの パンにも こまるありさまさ。"]));
-  else if (gold >= 150) lines.push(pick(`${seed}r`, ["しょうばいは じゅんちょう、わらいがとまらん!", "かねは あるところには あるものさ。", "ちょっとした ざいさんを きずいてね。"]));
+  else if (gold >= 150) lines.push(pick(`${seed}r`, ["しょうばいは じゅんちょう、わらいがとまらん!", "かねは あるところには あるものさ。", "ちょっとした ざいさんを きずいてね。", "とんだ かねもちに なっちまった。こまってる ひとには ほどこすのさ。"]));
 
   if (agent.trust >= 5) lines.push("みんなが わたしを しんじてくれる。ありがたいことだ。");
   else if (agent.trust === 0 && agent.reputation === 0) lines.push("この むらでは まだ かおが うれていなくてね。");
