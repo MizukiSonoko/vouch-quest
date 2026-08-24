@@ -3731,7 +3731,11 @@ function update(dt: number): void {
   }
 
   // NPCs: run errands around their village, and stop for a chat when they meet.
+  // Only the neighbourhood lives: with 1,700 souls in the world, simulating
+  // every distant villager would cost more than it shows. Far mobs hold still.
+  const SIM_RADIUS = 44;
   for (const mob of mobs) {
+    if (Math.abs(mob.x - player.x) > SIM_RADIUS || Math.abs(mob.y - player.y) > SIM_RADIUS) continue;
     const mx = mob.x * CELL;
     const my = mob.y * CELL;
     if (mob.px !== mx || mob.py !== my) {

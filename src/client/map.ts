@@ -1149,8 +1149,22 @@ export function placeNpcs(snapshot: Snapshot, map: WorldMap): { agent: AgentView
     const residents = snapshot.agents
       .filter((a) => a.region === village.regionId && a.role !== "treasury" && a.id !== snapshot.me.agentId)
       .sort((a, b) => a.id.localeCompare(b.id));
+    // A metropolis of six hundred souls cannot stand on a dozen doorsteps: past
+    // the doorstep count, residents fan out over every open tile of the city,
+    // deterministically, so the streets fill with a real crowd.
+    const openTiles: (readonly [number, number])[] = [];
+    if (residents.length > village.spots.length) {
+      for (const packed of village.cells) {
+        const cy = Math.floor(packed / MAP_W);
+        const cx = packed % MAP_W;
+        if (!SOLID.has((map.tiles[packed] ?? Tile.Water) as Tile)) openTiles.push([cx, cy] as const);
+      }
+    }
     residents.forEach((agent, i) => {
-      const spot = village.spots[i % village.spots.length] ?? [village.x + 2, village.y + 3];
+      const spot =
+        i < village.spots.length || openTiles.length === 0
+          ? village.spots[i % Math.max(1, village.spots.length)] ?? [village.x + 2, village.y + 3]
+          : openTiles[(i * 7919) % openTiles.length] ?? [village.x + 2, village.y + 3];
       // A merger may have built over this doorstep — sidestep to open ground.
       let [sx, sy] = spot;
       if (SOLID.has((map.tiles[sy * MAP_W + sx] ?? Tile.Water) as Tile)) {
