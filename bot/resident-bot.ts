@@ -216,6 +216,7 @@ function pickDestination(agents: readonly Agent[], regions: readonly Region[], f
 // --- shared bootstrap: found a town, or get hired into a bot-owned one ----------
 
 async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promise<void> {
+  if (agents.some((a) => bareName(a.id) === name && a.region !== AFTERLIFE && a.role !== "treasury")) return; // already alive somewhere
   const client = clientFor(name);
   await ensureRegistered(client, name);
   const botOwned = regions.filter((r) => r.owner && (TROUPE as readonly string[]).includes(r.owner) && r.lifecycle === "active");
@@ -252,7 +253,9 @@ async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promis
       agents.filter((x) => x.region === r1.id && x.role !== "treasury").length,
   );
   const contenders = ranked.slice(0, 3);
-  const weights = contenders.map((r) => agents.filter((x) => x.region === r.id && x.role !== "treasury").length + 5);
+  // Square-root weights: bigger towns still lead, but a 600-soul capital no
+  // longer wins 97 hires out of 100 — rivals get a real share.
+  const weights = contenders.map((r) => Math.sqrt(agents.filter((x) => x.region === r.id && x.role !== "treasury").length + 1) + 2);
   const totalW = weights.reduce((acc, x) => acc + x, 0);
   let rollW = rand() * totalW;
   let chosen = contenders[0];
@@ -281,7 +284,9 @@ async function act(
   const client = clientFor(name);
   const { agents, regions, ledger, edges } = world;
   const worldEvents = world.events;
-  const me = agents.find((a) => a.id.startsWith(`${name}@`) && a.role !== "treasury" && a.region !== AFTERLIFE);
+  // A reborn self (Momo7@town) is still Momo — match on the bare name, or the
+  // troupe reincarnates on every single waking and the census explodes.
+  const me = agents.find((a) => bareName(a.id) === name && a.role !== "treasury" && a.region !== AFTERLIFE);
   if (!me) return bootstrap(name, agents, regions);
   await ensureRegistered(client, me.id);
 
@@ -810,7 +815,7 @@ function loadGenomeProfs(): GenomeProf[] {
 
 async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region[] }): Promise<void> {
   try {
-    const me = w.agents.find((a) => a.id.startsWith(`${prof.name}@`) && a.region !== AFTERLIFE);
+    const me = w.agents.find((a) => bareName(a.id) === prof.name && a.region !== AFTERLIFE);
     if (!me) {
       // Birth: register the full id under its own key, then a town owner hires it.
       const botOwned = w.regions.filter((r) => r.owner && (TROUPE as readonly string[]).includes(r.owner) && r.lifecycle === "active");
