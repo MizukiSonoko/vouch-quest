@@ -219,7 +219,11 @@ async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promis
   const client = clientFor(name);
   await ensureRegistered(client, name);
   const botOwned = regions.filter((r) => r.owner && (TROUPE as readonly string[]).includes(r.owner) && r.lifecycle === "active");
-  const wantsOwnTown = name === "Toshi" || name === "Zai" || botOwned.length === 0;
+  // A continent of 70 hamlets serves nobody: founding grows rarer as the map
+  // fills, so newcomers join and thicken the towns that already live.
+  const liveTowns = regions.filter((r) => r.lifecycle === "active" && r.id !== AFTERLIFE).length;
+  const foundingUrge = Math.max(0.05, 1 - liveTowns / 40);
+  const wantsOwnTown = botOwned.length === 0 || ((name === "Toshi" || name === "Zai") && rand() < foundingUrge);
   if (wantsOwnTown) {
     const taken = new Set(regions.map((r) => r.id));
     const rid = TOWNS.find((t) => !taken.has(t)) ?? `machi${Math.floor(rand() * 900) + 100}`;
@@ -230,9 +234,26 @@ async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promis
     await client.amend(name, rid, { policy: "items", value: { minting: "anyone" } });
     return;
   }
-  const home = pick(botOwned);
+  // Newcomers are hired into the liveliest town, not a random one: cities grow
+  // by gathering, and this world has spread far too thin.
+  // Reincarnation: a troupe member whose every past self lies in the afterlife
+  // returns under a fresh generational name, so the cast never truly dies out.
+  // A generational name is needed whenever THIS town already knows the name —
+  // the engine refuses to admit an id twice, alive or departed.
+  const pastSelves = agents.filter((x) => bareName(x.id) === name).length;
+  const generation = (town: string): string =>
+    agents.some((x) => x.id === `${name}@${town}`) ? `${name}${pastSelves + 1}` : name;
+  const home = [...botOwned].sort(
+    (r1, r2) =>
+      agents.filter((x) => x.region === r2.id && x.role !== "treasury").length -
+      agents.filter((x) => x.region === r1.id && x.role !== "treasury").length,
+  )[0] ?? pick(botOwned);
   const owner = home.owner ?? "";
-  say(owner, `hires ${name} into ${home.id}`, await clientFor(owner).admit(owner, `${name}@${home.id}`, home.id, ROLES[name], name === "Ginko" ? 500 : 200));
+const reborn = generation(home.id);
+  const hiredId = `${reborn}@${home.id}`;
+  await ensureRegistered(clientFor(hiredId), hiredId);
+  await sleep(600);
+  say(owner, `hires ${reborn} into ${home.id}`, await clientFor(owner).admit(owner, hiredId, home.id, ROLES[name], name === "Ginko" ? 500 : 200));
 }
 
 // --- one waking resident --------------------------------------------------------
@@ -799,7 +820,8 @@ async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region
     }
     // とつぜんへんい: a prospering genome-born artisan may found a guild town
     // named after their craft — a REAL settlement born from an invented trade.
-    if (rand() < 0.06 && me.balances.currency >= 60 && !w.regions.some((r) => r.owner === prof.name)) {
+    const liveTowns2 = w.regions.filter((r) => r.lifecycle === "active" && r.id !== AFTERLIFE).length;
+    if (rand() < 0.06 * Math.max(0.05, 1 - liveTowns2 / 40) && me.balances.currency >= 150 && !w.regions.some((r) => r.owner === prof.name)) {
       const bare = clientFor(prof.name);
       await ensureRegistered(bare, prof.name);
       const taken = new Set(w.regions.map((r) => r.id));
