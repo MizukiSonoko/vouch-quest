@@ -243,11 +243,27 @@ async function bootstrap(name: Name, agents: Agent[], regions: Region[]): Promis
   const pastSelves = agents.filter((x) => bareName(x.id) === name).length;
   const generation = (town: string): string =>
     agents.some((x) => x.id === `${name}@${town}`) ? `${name}${pastSelves + 1}` : name;
-  const home = [...botOwned].sort(
+  // Rival metropolises, not one primate city: newcomers join one of the three
+  // liveliest towns, weighted by size — cities compete instead of a single
+  // capital swallowing every soul.
+  const ranked = [...botOwned].sort(
     (r1, r2) =>
       agents.filter((x) => x.region === r2.id && x.role !== "treasury").length -
       agents.filter((x) => x.region === r1.id && x.role !== "treasury").length,
-  )[0] ?? pick(botOwned);
+  );
+  const contenders = ranked.slice(0, 3);
+  const weights = contenders.map((r) => agents.filter((x) => x.region === r.id && x.role !== "treasury").length + 5);
+  const totalW = weights.reduce((acc, x) => acc + x, 0);
+  let rollW = rand() * totalW;
+  let chosen = contenders[0];
+  for (let i = 0; i < contenders.length; i++) {
+    rollW -= weights[i] ?? 0;
+    if (rollW <= 0) {
+      chosen = contenders[i];
+      break;
+    }
+  }
+  const home = chosen ?? pick(botOwned);
   const owner = home.owner ?? "";
 const reborn = generation(home.id);
   const hiredId = `${reborn}@${home.id}`;

@@ -2228,6 +2228,7 @@ function businessLedger(): string[] {
 function worldMilestones(): Milestone[] {
   let admitted = 0;
   let deaths = 0;
+  const pops = new Map<string, number>();
   let vouches = 0;
   let regionsN = 0;
   let marriages = 0;
@@ -2240,10 +2241,30 @@ function worldMilestones(): Milestone[] {
     const p = e.payload;
     if (e.type === "agent.admitted") {
       admitted++;
+      {
+        const rid3 = (e.payload["admission"] as Record<string, unknown> | undefined)?.["region"];
+        if (typeof rid3 === "string") {
+          const n3 = (pops.get(rid3) ?? 0) + 1;
+          pops.set(rid3, n3);
+          if (n3 === 100) mark("c100", e.seq);
+          if (n3 === 250) mark("c250", e.seq);
+          if (n3 === 500) mark("c500", e.seq);
+        }
+      }
       if (admitted === 500) mark("a500", e.seq);
       if (admitted === 1000) mark("a1000", e.seq);
       if (admitted === 2000) mark("a2000", e.seq);
     } else if (e.type === "agent.migrated") {
+      {
+        const to3 = p["toRegion"];
+        if (typeof to3 === "string" && to3 !== AFTERLIFE) {
+          const n4 = (pops.get(to3) ?? 0) + 1;
+          pops.set(to3, n4);
+          if (n4 === 100) mark("c100", e.seq);
+          if (n4 === 250) mark("c250", e.seq);
+          if (n4 === 500) mark("c500", e.seq);
+        }
+      }
       if (p["toRegion"] === AFTERLIFE) {
         deaths++;
         if (deaths === 500) mark("d500", e.seq);
@@ -2282,6 +2303,9 @@ function worldMilestones(): Milestone[] {
     ["m50", "50くみめの ふうふ"],
     ["d500", "500の たましいが あのよへ"],
     ["d1000", "1000の たましい"],
+    ["c100", "はじめての だいとかい (100にん)"],
+    ["c250", "250にんの メガシティ"],
+    ["c500", "500にんの だいとし"],
     ["r25", "25ばんめの むら"],
     ["r50", "50ばんめの むら"],
   ];
