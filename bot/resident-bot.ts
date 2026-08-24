@@ -202,7 +202,11 @@ function pickDestination(agents: readonly Agent[], regions: readonly Region[], f
   const weights = options.map((r) => {
     const pop = agents.filter((x) => x.region === r.id && x.role !== "treasury").length;
     const bank = agents.find((x) => x.id === `treasury@${r.id}`)?.balances.currency ?? 0;
-    return (pop + bank / 10 + (charm.get(r.id) ?? 0) + 1) ** 2;
+    // したくきん: a rich lord of an empty town is a powerful draw — the bounty
+    // pulls settlers back out to the frontier, against the pull of the capital.
+    const lord = r.owner ? agents.find((x) => bareName(x.id) === r.owner && x.region !== AFTERLIFE && x.role !== "treasury") : undefined;
+    const bounty = pop <= 8 && (lord?.balances.currency ?? 0) >= 80 ? 14 : 0;
+    return (pop + bank / 10 + (charm.get(r.id) ?? 0) + bounty + 1) ** 2;
   });
   const total = weights.reduce((acc, x) => acc + x, 0);
   let roll = rand() * total;
@@ -872,6 +876,59 @@ async function genomeAct(prof: GenomeProf, w: { agents: Agent[]; regions: Region
   await sleep(900);
 }
 
+// --- したくきん: the empty-but-rich town pays for settlers ------------------------
+// A continent where one city holds six hundred souls and seventy towns hold
+// three is a market failure. A bot-owned town with coin and no people now pays
+// a settlement bounty to anyone who moves in — paid once per newcomer, and the
+// "once" is derived from the log itself (no ledger to keep, nothing to forge).
+
+async function paySettlementBounties(w: { agents: Agent[]; regions: Region[]; events: LogEvent[] }): Promise<void> {
+  const genomeNames = new Set(loadGenomeProfs().map((pr) => pr.name));
+  const isOurs2 = (owner: string): boolean => (TROUPE as readonly string[]).includes(owner) || genomeNames.has(owner);
+  const logLen = w.events.length > 0 ? (w.events[w.events.length - 1]?.seq ?? 0) + 1 : 0;
+  const recentFrom = Math.max(0, logLen - 1500);
+
+  for (const region of w.regions) {
+    const owner = region.owner ?? "";
+    if (!owner || !isOurs2(owner) || region.lifecycle !== "active" || region.id === AFTERLIFE) continue;
+    const pop = w.agents.filter((x) => x.region === region.id && x.role !== "treasury").length;
+    if (pop > 8) continue;
+    const ownerAgent = w.agents.find((x) => bareName(x.id) === owner && x.region !== AFTERLIFE && x.role !== "treasury");
+    if (!ownerAgent || ownerAgent.balances.currency < 80) continue;
+
+    // Newcomers: anyone who migrated into this town recently.
+    const arrivals = new Set<string>();
+    for (const e of w.events) {
+      if (e.seq < recentFrom || e.type !== "agent.migrated") continue;
+      if (e.payload["toRegion"] !== region.id) continue;
+      const who = typeof e.payload["agentId"] === "string" ? (e.payload["agentId"] as string) : "";
+      if (who) arrivals.add(who);
+    }
+    // Already paid? The log says so — any earlier transfer from this owner.
+    const paid = new Set<string>();
+    for (const e of w.events) {
+      if (e.type !== "economy.settled") continue;
+      const entries = (e.payload["entries"] as { agentId?: string; currencyDelta?: number }[] | undefined) ?? [];
+      const from = entries.find((x) => x.agentId && bareName(x.agentId) === owner && (x.currencyDelta ?? 0) < 0);
+      if (!from) continue;
+      for (const en of entries) {
+        if (en.agentId && (en.currencyDelta ?? 0) >= 20) paid.add(en.agentId);
+      }
+    }
+    const target = [...arrivals].find((id) => !paid.has(id) && w.agents.some((x) => x.id === id && x.region === region.id));
+    if (!target || rand() > 0.6) continue;
+    try {
+      const c = clientFor(ownerAgent.id);
+      await ensureRegistered(c, ownerAgent.id);
+      const bounty = 25 + Math.floor(rand() * 20);
+      say(ownerAgent.id, `pays ${target} a settlement bounty of ${bounty}G to stay in ${region.id}`, await c.transfer(ownerAgent.id, target, bounty));
+      await sleep(900);
+    } catch (error) {
+      say(owner, "bounty stumbled:", error instanceof Error ? error.message : String(error));
+    }
+  }
+}
+
 // --- ghost-town consolidation ----------------------------------------------------
 // The guild-town boom left dozens of empty settlements. An owner who wakes to
 // find a town of theirs deserted (and it is not their own home) usually closes
@@ -1150,4 +1207,5 @@ for (const p of wakingProfs) await genomeAct(p, world);
 
 await honorEstateSales(world);
 await consolidateGhostTowns(world);
+await paySettlementBounties(world);
 await respondToPlayers(world);

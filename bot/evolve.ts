@@ -226,7 +226,7 @@ const okName = (x: unknown): x is string => typeof x === "string" && /^[A-Za-z][
 function merge(genome: Genome, add: Additions): { genome: Genome; grown: string[] } {
   const grown: string[] = [];
   for (const v of (add.vocab ?? []).slice(0, 8)) {
-    if (okKind(v.kind) && okShort(v.name, 24) && !(v.kind in genome.vocab) && Object.keys(genome.vocab).length < 400) {
+    if (okKind(v.kind) && okShort(v.name, 24) && !(v.kind in genome.vocab) && Object.keys(genome.vocab).length < 800) {
       genome.vocab[v.kind] = v.name;
       grown.push(`vocab:${v.kind}`);
     }

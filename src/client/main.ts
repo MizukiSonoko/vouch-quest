@@ -1912,6 +1912,14 @@ function requestBoard(): string[] {
       lines.push(`◆ ${v.displayName}が ${tr.label}! — ${tr.hint}`);
     }
   }
+  for (const r of snapshot.regions) {
+    if (r.id === AFTERLIFE || r.lifecycle !== "active") continue;
+    const pop = snapshot.agents.filter((a2) => a2.region === r.id && a2.role !== "treasury").length;
+    const ownerRich = snapshot.agents.find((a2) => r.owner && a2.id.startsWith(`${r.owner}@`) && a2.role !== "treasury");
+    if (pop <= 8 && (ownerRich?.balances.currency ?? 0) >= 80) {
+      lines.push(`◆ ${r.displayName}は ひとでが たりない — ひっこせば あるじが したくきんを くれる`);
+    }
+  }
   const spot = treasureSpot();
   if (spot && !myItems().some((i) => i.kind === "takara")) {
     lines.push(`◆ たからのうわさ: ちずの (${Math.round(spot[0] / 10) * 10}, ${Math.round(spot[1] / 10) * 10}) ふきんに なにかが ねむる…`);
