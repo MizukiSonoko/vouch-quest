@@ -81,7 +81,10 @@ const CHILD_NAMES = ["Kotaro", "Hanako", "Jiro", "Momoko", "Shinta", "Sakurako",
 const bareName = (agentId: string): string => (agentId.split("@")[0] ?? "").replace(/\d+$/, "");
 const isBotFolk = (agentId: string): boolean => {
   const n = bareName(agentId);
-  return SETTLERS.includes(n) || CHILD_NAMES.includes(n);
+  // Reborn troupe descendants (Momo175@machi304) hold keys we can derive from
+  // their full id, so they are ordinary villagers too — without this the six
+  // hundred souls of the capital were inert, and the world stood still.
+  return SETTLERS.includes(n) || CHILD_NAMES.includes(n) || (TROUPE as readonly string[]).includes(n);
 };
 
 // --- constitutions: presets over the raw governance primitive -------------------
@@ -187,9 +190,13 @@ const isMarried = (edges: Set<string>, id: string, others: readonly Agent[]): bo
 // Migrants overwhelmingly head for the biggest, richest towns; that is how a
 // metropolis forms and stays formed. Weight = (residents + treasury/10 + 1)^2.
 
-function pickDestination(agents: readonly Agent[], regions: readonly Region[], fromRegion: string, items: readonly Item[] = []): Region | null {
-  const options = regions.filter((r) => r.lifecycle === "active" && r.id !== fromRegion && r.id !== AFTERLIFE);
-  if (options.length === 0) return null;
+function pickDestination(agents: readonly Agent[], regions: readonly Region[], fromRegion: string, items: readonly Item[] = [], fleeing = false): Region | null {
+  const all = regions.filter((r) => r.lifecycle === "active" && r.id !== fromRegion && r.id !== AFTERLIFE);
+  // Urban flight looks for room to breathe: the crowded places are skipped.
+  const options = fleeing
+    ? all.filter((r) => agents.filter((x) => x.region === r.id && x.role !== "treasury").length < 60)
+    : all;
+  if (options.length === 0) return fleeing ? null : null;
   // SimCity feedback: standing homes and decor built by residents make a town
   // ATTRACTIVE — construction genuinely pulls immigration.
   const charm = new Map<string, number>();
@@ -690,6 +697,19 @@ async function villagerAct(
   const myByoki = items.find((it) => it.owner === agent.id && it.kind === BYOKI);
 
   try {
+    // Urban flight comes first: in a city choking on six hundred souls, the
+    // decision to leave outweighs the day's errands.
+    {
+      const homePop0 = agents.filter((x) => x.region === agent.region && x.role !== "treasury").length;
+      if (homePop0 > 60 && rand() < 0.35) {
+        const escape = pickDestination(agents, regions, agent.region, items, true);
+        if (escape) {
+          say(agent.id, `flees the crowded ${agent.region} for ${escape.id}`, await client.migrate(agent.id, escape.id));
+          return;
+        }
+      }
+    }
+
     // A hired hand puts in their shift before anything else.
     if (await workShift(agent, client, world.events, items)) return;
 
@@ -770,9 +790,16 @@ async function villagerAct(
       // The city keeps its people: the busier home is, the fewer leave. Those
       // who do go follow the bright lights (population- and wealth-weighted).
       const homePop = agents.filter((x) => x.region === agent.region && x.role !== "treasury").length;
-      if (rand() >= Math.min(0.85, homePop / 16)) {
-        const t2 = pickDestination(agents, regions, agent.region, items);
-        if (t2) say(agent.id, `moves to ${t2.id}`, await client.migrate(agent.id, t2.id));
+      // Urban flight: a city keeps its people until it chokes on them. Past
+      // sixty souls the crowding itself drives residents out to the frontier —
+      // the suburbanisation that follows every boom.
+      const overcrowded = homePop > 60;
+      const stayChance = overcrowded ? 0.25 : Math.min(0.85, homePop / 16);
+      if (rand() >= stayChance) {
+        const t2 = pickDestination(agents, regions, agent.region, items, overcrowded);
+        if (t2) {
+          say(agent.id, overcrowded ? `flees the crowded ${agent.region} for ${t2.id}` : `moves to ${t2.id}`, await client.migrate(agent.id, t2.id));
+        }
       }
     }
   } catch (error) {
