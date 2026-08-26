@@ -951,6 +951,30 @@ export function buildMap(snapshot: Snapshot): WorldMap {
     }
   }
 
+  // はいきょ: a settlement nobody lives in weathers. Fences gap, streets go to
+  // grass, lamps and flowers die back, and rubble appears where houses stood —
+  // all derived from the same population the rest of the world reads, so a
+  // resettled ruin blooms again the moment someone moves in.
+  for (const v of villages) {
+    const region = snapshot.regions.find((r) => r.id === v.regionId);
+    const pop = snapshot.agents.filter((a2) => a2.region === v.regionId && a2.role !== "treasury").length;
+    const abandoned = pop === 0 || region?.lifecycle === "dormant";
+    if (!abandoned) continue;
+    const rot = villageRng(`${v.regionId}:ruin`);
+    for (const packed of v.cells) {
+      const y = Math.floor(packed / MAP_W);
+      const x = packed % MAP_W;
+      const t = tiles[packed] ?? Tile.Grass;
+      if (t === Tile.Fence && rot() < 0.45) set(tiles, x, y, Tile.Grass2);
+      else if ((t === Tile.Path || t === Tile.Pavement || t === Tile.Crossing) && rot() < 0.5) set(tiles, x, y, rot() < 0.3 ? Tile.Grass2 : Tile.Grass);
+      else if ((t === Tile.Lamp || t === Tile.Flower || t === Tile.Stall) && rot() < 0.7) set(tiles, x, y, Tile.Grass2);
+      else if ((t === Tile.HouseRoof || t === Tile.RoofGreen || t === Tile.RoofBlue || t === Tile.RoofBrown) && rot() < 0.25) set(tiles, x, y, Tile.Rock);
+      else if ((t === Tile.HouseWall || t === Tile.WallWood || t === Tile.WallWindow || t === Tile.WallWoodWindow) && rot() < 0.2) set(tiles, x, y, Tile.Grass2);
+      else if (t === Tile.Farm && rot() < 0.6) set(tiles, x, y, Tile.Grass2);
+      else if (t === Tile.Grass && rot() < 0.12) set(tiles, x, y, Tile.Tree); // the forest returns
+    }
+  }
+
   // Diplomacy made visible: mutually friendly villages get a road between their
   // gates. Roads never cut through a village plot — a fence stays a fence.
   const inAnyPlot = (x: number, y: number): boolean => villages.some((v) => villageContains(v, x, y));

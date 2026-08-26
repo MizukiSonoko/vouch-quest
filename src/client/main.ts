@@ -1920,6 +1920,15 @@ function requestBoard(): string[] {
       lines.push(`◆ ${r.displayName}は ひとでが たりない — ひっこせば あるじが したくきんを くれる`);
     }
   }
+  {
+    const ruins = (map?.villages ?? []).filter(
+      (v) => (snapshot?.agents.filter((a2) => a2.region === v.regionId && a2.role !== "treasury").length ?? 0) === 0,
+    );
+    if (ruins.length > 0) {
+      const r0 = ruins[Math.floor((snapshot?.logLength ?? 0) / 97) % ruins.length];
+      if (r0) lines.push(`◆ ${r0.displayName}あとは はいきょに なった — ひっこして よみがえらせる ことも できる`);
+    }
+  }
   const spot = treasureSpot();
   if (spot && !myItems().some((i) => i.kind === "takara")) {
     lines.push(`◆ たからのうわさ: ちずの (${Math.round(spot[0] / 10) * 10}, ${Math.round(spot[1] / 10) * 10}) ふきんに なにかが ねむる…`);
@@ -4044,13 +4053,17 @@ function render(): void {
         ctx.fillText(`${tr.icon}${tr.label}`, chipX + 4, chipY + 3);
       }
     });
+    const villagePop = snapshot.agents.filter((a2) => a2.region === village.regionId && a2.role !== "treasury").length;
+    const isRuin = villagePop === 0 || snapshot.regions.find((r) => r.id === village.regionId)?.lifecycle === "dormant";
     const hostV = village.parent ? map.villages.find((o) => o.regionId === village.parent) : null;
     drawText(
       ctx,
-      `${village.displayName}${municipalRank(village.tier)}${hostV ? `〔${hostV.displayName}${municipalRank(hostV.tier)}内〕` : ""} (${BIOME_JA[village.biome]})`,
+      isRuin
+        ? `${village.displayName}あと 〜はいきょ〜`
+        : `${village.displayName}${municipalRank(village.tier)}${hostV ? `〔${hostV.displayName}${municipalRank(hostV.tier)}内〕` : ""} (${BIOME_JA[village.biome]})`,
       village.x * CELL - camX + 8,
       (village.y - 1) * CELL - camY + 20,
-      "#ffd75e",
+      isRuin ? "#9aa0aa" : "#ffd75e",
     );
     ctx.font = '13px "DotGothic16", monospace';
     ctx.fillStyle = "#ffffff";
