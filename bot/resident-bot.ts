@@ -194,7 +194,7 @@ function pickDestination(agents: readonly Agent[], regions: readonly Region[], f
   const all = regions.filter((r) => r.lifecycle === "active" && r.id !== fromRegion && r.id !== AFTERLIFE);
   // Urban flight looks for room to breathe: the crowded places are skipped.
   const options = fleeing
-    ? all.filter((r) => agents.filter((x) => x.region === r.id && x.role !== "treasury").length < 60)
+    ? all.filter((r) => agents.filter((x) => x.region === r.id && x.role !== "treasury").length < 80)
     : all;
   if (options.length === 0) return fleeing ? null : null;
   // SimCity feedback: standing homes and decor built by residents make a town
@@ -213,7 +213,9 @@ function pickDestination(agents: readonly Agent[], regions: readonly Region[], f
     // pulls settlers back out to the frontier, against the pull of the capital.
     const lord = r.owner ? agents.find((x) => bareName(x.id) === r.owner && x.region !== AFTERLIFE && x.role !== "treasury") : undefined;
     const bounty = pop <= 8 && (lord?.balances.currency ?? 0) >= 80 ? 14 : 0;
-    return (pop + bank / 10 + (charm.get(r.id) ?? 0) + bounty + 1) ** 2;
+    // Agglomeration saturates: beyond sixty souls a town no longer out-draws
+    // everywhere else, so several cities can rise instead of one or none.
+    return (Math.min(pop, 60) + bank / 10 + (charm.get(r.id) ?? 0) + bounty + 1) ** 2;
   });
   const total = weights.reduce((acc, x) => acc + x, 0);
   let roll = rand() * total;
@@ -520,13 +522,15 @@ async function act(
   }
 
   // Births: where married couples live, the town welcomes children (population grows).
-  if (rand() < 0.6) {
+  if (rand() < 0.85) {
     for (const town of owned) {
       if (town.id === AFTERLIFE) continue;
       const townFolk = agents.filter((a) => a.region === town.id && a.role !== "treasury" && a.region !== AFTERLIFE);
       const couples = townFolk.filter((a) => isMarried(edges, a.id, townFolk)).length / 2;
       const children = townFolk.filter((a) => CHILD_NAMES.includes(bareName(a.id))).length;
-      if (couples >= 1 && children < couples * 3 && townFolk.length < 26) {
+      // The world lost 1,500 souls to a mis-scaled lifespan; the towns are
+      // half-empty. Families are larger and the cap is a city's worth now.
+      if (couples >= 1 && children < couples * 5 && townFolk.length < 90) {
         let childName = "";
         for (const base of CHILD_NAMES) {
           for (let n = 0; n < 4; n++) {
@@ -701,7 +705,7 @@ async function villagerAct(
     // decision to leave outweighs the day's errands.
     {
       const homePop0 = agents.filter((x) => x.region === agent.region && x.role !== "treasury").length;
-      if (homePop0 > 60 && rand() < 0.35) {
+      if (homePop0 > 120 && rand() < 0.12) {
         const escape = pickDestination(agents, regions, agent.region, items, true);
         if (escape) {
           say(agent.id, `flees the crowded ${agent.region} for ${escape.id}`, await client.migrate(agent.id, escape.id));
@@ -726,7 +730,13 @@ async function villagerAct(
     }
 
     // The end of a long life (or a hard illness): the road to the afterlife.
-    if (regions.some((r) => r.id === AFTERLIFE) && ((age > 900 && rand() < 0.1) || (myByoki && age > 400 && rand() < 0.12))) {
+    // A lifetime is measured in events, and the world's pulse has quickened from
+    // a few hundred a day to many thousands: at the old thresholds every soul
+    // aged out within hours and the living dwindled to a handful. Lifespans now
+    // scale with the tempo — three-score-and-ten in this world's own time.
+    const OLD_AGE = 12_000;
+    const FRAIL_AGE = 6_000;
+    if (regions.some((r) => r.id === AFTERLIFE) && ((age > OLD_AGE && rand() < 0.1) || (myByoki && age > FRAIL_AGE && rand() < 0.12))) {
       say(agent.id, "breathes their last and departs", await client.migrate(agent.id, AFTERLIFE));
       return;
     }
@@ -793,8 +803,8 @@ async function villagerAct(
       // Urban flight: a city keeps its people until it chokes on them. Past
       // sixty souls the crowding itself drives residents out to the frontier —
       // the suburbanisation that follows every boom.
-      const overcrowded = homePop > 60;
-      const stayChance = overcrowded ? 0.25 : Math.min(0.85, homePop / 16);
+      const overcrowded = homePop > 120;
+      const stayChance = overcrowded ? 0.6 : Math.min(0.85, homePop / 16);
       if (rand() >= stayChance) {
         const t2 = pickDestination(agents, regions, agent.region, items, overcrowded);
         if (t2) {
