@@ -294,13 +294,16 @@ async function act(
   name: Name,
   world: { agents: Agent[]; regions: Region[]; ledger: Map<string, number>; edges: Set<string>; items: Item[]; events: LogEvent[] },
 ): Promise<void> {
-  const client = clientFor(name);
   const { agents, regions, ledger, edges } = world;
   const worldEvents = world.events;
   // A reborn self (Momo7@town) is still Momo — match on the bare name, or the
   // troupe reincarnates on every single waking and the census explodes.
   const me = agents.find((a) => bareName(a.id) === name && a.role !== "treasury" && a.region !== AFTERLIFE);
   if (!me) return bootstrap(name, agents, regions);
+  // The living self may be a descendant (Momo175@town), whose key rides the
+  // FULL id; the first generation's key rides the bare name. Pick accordingly.
+  const selfName = me.id.split("@")[0] ?? name;
+  const client = selfName === name ? clientFor(name) : clientFor(me.id);
   await ensureRegistered(client, me.id);
 
   const others = agents.filter((a) => a.role !== "treasury" && !a.id.startsWith(`${name}@`) && a.region !== AFTERLIFE);
@@ -693,7 +696,12 @@ async function villagerAct(
   agent: Agent,
   world: { agents: Agent[]; regions: Region[]; ledger: Map<string, number>; edges: Set<string>; logLen: number; items: Item[]; events: LogEvent[] },
 ): Promise<void> {
-  const client = clientFor(agent.id);
+  // Two generations, two keys: the first troupe registered their agent ids with
+  // the BARE-name key (Panya), while the reborn registered with their full id
+  // (Momo175@machi304). Signing with the wrong one is a bad-signature 401.
+  const namePart = agent.id.split("@")[0] ?? "";
+  const originalTroupe = (TROUPE as readonly string[]).includes(namePart);
+  const client = clientFor(originalTroupe ? namePart : agent.id);
   await ensureRegistered(client, agent.id);
   const { agents, regions, ledger, edges, logLen, items } = world;
   const neighbors = agents.filter((a) => a.region === agent.region && a.role !== "treasury" && a.id !== agent.id && a.region !== AFTERLIFE);
@@ -1245,4 +1253,41 @@ for (const p of wakingProfs) await genomeAct(p, world);
 await honorEstateSales(world);
 await consolidateGhostTowns(world);
 await paySettlementBounties(world);
+
+// いじゅうしゃ: the world lost most of its people to a mis-scaled lifespan.
+// Owners with coin invite fresh settlers into their thinnest towns until the
+// continent is peopled again.
+await (async () => {
+  const genomeNames2 = new Set(loadGenomeProfs().map((pr) => pr.name));
+  const mine = world.regions.filter(
+    (r) => r.owner && ((TROUPE as readonly string[]).includes(r.owner) || genomeNames2.has(r.owner)) && r.lifecycle === "active" && r.id !== AFTERLIFE,
+  );
+  const thin = mine
+    .map((r) => ({ r, pop: world.agents.filter((x) => x.region === r.id && x.role !== "treasury").length }))
+    .filter((t) => t.pop < 12)
+    .sort((t1, t2) => t1.pop - t2.pop)
+    .slice(0, 3);
+  for (const { r } of thin) {
+    const owner = r.owner ?? "";
+    const lord = world.agents.find((x) => bareName(x.id) === owner && x.region !== AFTERLIFE && x.role !== "treasury");
+    if (!lord || lord.balances.currency < 60) continue;
+    const fresh = SETTLERS.map((n) => {
+      for (let g = 0; g < 40; g++) {
+        const cand = g === 0 ? n : `${n}${g + 1}`;
+        if (!world.agents.some((x) => x.id === `${cand}@${r.id}`)) return cand;
+      }
+      return null;
+    }).filter((n): n is string => n !== null);
+    const pickName = fresh[Math.floor(rand() * fresh.length)];
+    if (!pickName || rand() > 0.7) continue;
+    try {
+      const c = clientFor(owner);
+      await ensureRegistered(c, owner);
+      say(owner, `invites the settler ${pickName} to ${r.id}`, await c.admit(owner, `${pickName}@${r.id}`, r.id, pick(["artisan", "merchant", "broker"]), 90));
+      await sleep(900);
+    } catch (error) {
+      say(owner, "invitation stumbled:", error instanceof Error ? error.message : String(error));
+    }
+  }
+})();
 await respondToPlayers(world);
