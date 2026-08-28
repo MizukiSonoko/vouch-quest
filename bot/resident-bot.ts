@@ -387,9 +387,16 @@ async function act(
     }
   } else if (rand() < 0.08) {
     const home = regions.find((r) => r.id === me.region);
-    if (home && home.institutions.governance.kind === "council" && !home.openProposal) {
+    // A proposal is a promise the town must be able to keep: in a world where
+    // most souls end in the afterlife, a roll of the dead freezes the council
+    // for ever. Only propose where enough of the living can carry the vote.
+    const livingHere = agents.filter((x) => x.region === me.region && x.role !== "treasury" && x.region !== AFTERLIFE).length;
+    if (home && home.institutions.governance.kind === "council" && !home.openProposal && livingHere >= 4) {
       const residents = agents.filter((a) => a.region === home.id && a.role !== "treasury").map((a) => a.id);
-      const regime = pick(REGIMES);
+      // Constitutions sized to the living: a hamlet that adopts consensus rule
+    // freezes the moment anyone dies, so small towns get small councils.
+    const townFolkNow = agents.filter((x) => x.region === me.region && x.role !== "treasury" && x.region !== AFTERLIFE).length;
+    const regime = townFolkNow >= 8 ? pick(REGIMES) : pick(["dictatorship", "oligarchy", "republic"] as const as readonly Regime[]);
       say(name, `proposes a new constitution for ${home.id}: ${regime}`,
         await client.propose(me.id, home.id, { policy: "governance", value: buildGovernance(regime, residents) }));
       await sleep(900);

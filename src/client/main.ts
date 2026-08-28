@@ -2469,6 +2469,26 @@ function worldRecords(): void {
   ui.push(
     new Info("せかいの きろく", [
       `むら ${m.regions.length} / じゅうみん ${folk.length}にん / どうぐ ${m.items.length}こ / できごと ${m.logLength}`,
+      "～けんせいの きろく～",
+      ...(() => {
+        const councils = m.regions.filter((r) => classifyRegime(r.institutions.governance as GovernanceValue) !== "dictatorship");
+        const opens = m.regions.filter((r) => r.openProposal);
+        const frozen = opens.filter((r) => {
+          const roll = r.openProposal?.roll ?? [];
+          return roll.length > 0 && roll.every((v) => {
+            const ag = m.agents.find((a2) => a2.id === v.voter);
+            return !ag || isDead(ag.region);
+          });
+        });
+        const lines2 = [
+          ` ぎかいの まち ${councils.length} / しんぎちゅうの ぎあん ${opens.length}`,
+          frozen.length > 0
+            ? ` こおりついた ぎかい ${frozen.length}: ${frozen.map((r) => r.displayName).join("・")}`
+            : " こおりついた ぎかいは ない",
+        ];
+        if (frozen.length > 0) lines2.push(" (せんきょにんめいぼは ていあんの ときに とじる。その みなが てんに めされると、ぎあんは えいえんに のこる)");
+        return lines2;
+      })(),
       "～せかいのきねんび～",
       ...worldMilestones().map((ms) => (ms.reachedAtSeq !== null ? ` ★ ${ms.label} (だい${ms.reachedAtSeq}のできごと)` : ` ・ ${ms.label} — まだ`)),
       "～ちょうじゃばんづけ~",
