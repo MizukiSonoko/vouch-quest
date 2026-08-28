@@ -31,7 +31,11 @@ export const REGIMES: readonly Regime[] = ["dictatorship", "oligarchy", "republi
  * agent ids, most senior/reputable first (the caller decides the ordering that
  * "elite" and "representative" mean).
  */
-export function buildGovernance(regime: Regime, residents: readonly string[]): GovernanceValue {
+/** The engine seats at most 64 council members (MAX_COUNCIL_MEMBERS). */
+export const MAX_SEATS = 60;
+
+export function buildGovernance(regime: Regime, allResidents: readonly string[]): GovernanceValue {
+  const residents = allResidents.slice(0, MAX_SEATS);
   const n = Math.max(residents.length, 1);
   switch (regime) {
     case "dictatorship":

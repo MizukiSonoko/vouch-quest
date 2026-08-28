@@ -392,7 +392,13 @@ async function act(
     // for ever. Only propose where enough of the living can carry the vote.
     const livingHere = agents.filter((x) => x.region === me.region && x.role !== "treasury" && x.region !== AFTERLIFE).length;
     if (home && home.institutions.governance.kind === "council" && !home.openProposal && livingHere >= 4) {
-      const residents = agents.filter((a) => a.region === home.id && a.role !== "treasury").map((a) => a.id);
+      // The engine seats at most 64 members: a city of seventy cannot convene a
+      // citizens' assembly, so the roll is the most reputable sixty-four.
+      const residents = agents
+        .filter((a) => a.region === home.id && a.role !== "treasury" && a.region !== AFTERLIFE)
+        .sort((r1, r2) => r2.reputation - r1.reputation || r1.admittedAtSeq - r2.admittedAtSeq)
+        .slice(0, 60)
+        .map((a) => a.id);
       // Constitutions sized to the living: a hamlet that adopts consensus rule
     // freezes the moment anyone dies, so small towns get small councils.
     const townFolkNow = agents.filter((x) => x.region === me.region && x.role !== "treasury" && x.region !== AFTERLIFE).length;
