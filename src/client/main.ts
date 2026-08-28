@@ -86,7 +86,99 @@ function extraExtra(text: string): void {
   shakeUntil = performance.now() + 700;
   se("fanfare");
 }
-let scene: "title" | "game" | "interior" | "mine" = "title";
+let scene: "title" | "game" | "interior" | "mine" | "afterlife" = "title";
+
+/** あのよ: the far shore. Everyone who ever migrated to the afterlife drifts
+ * here — pale, unhurried, and remembered. Reached by pressing your hands
+ * together at any town's memorial stone. Nothing here changes the world. */
+interface Afterlife {
+  readonly souls: { agent: AgentView; x: number; y: number; phase: number }[];
+  px: number;
+  py: number;
+  readonly fromTown: string;
+}
+let afterlife: Afterlife | null = null;
+const ANOYO_W = 15;
+const ANOYO_H = 10;
+
+function enterAfterlife(townName: string, regionId: string): void {
+  if (!snapshot) return;
+  // The town's own dead come first — those born under its name — then the rest.
+  const dead = snapshot.agents.filter((a2) => isDead(a2.region) && a2.role !== "treasury");
+  const theirs = dead.filter((a2) => a2.id.endsWith(`@${regionId}`));
+  const others = dead.filter((a2) => !a2.id.endsWith(`@${regionId}`));
+  const chosen = [...theirs, ...others].slice(0, 40);
+  const souls = chosen.map((agent, i) => {
+    let h = 0;
+    for (let k = 0; k < agent.id.length; k++) h = (Math.imul(h, 31) + agent.id.charCodeAt(k)) | 0;
+    return {
+      agent,
+      x: 1 + (Math.abs(h) % (ANOYO_W - 2)),
+      y: 1 + (Math.abs(h >> 7) % (ANOYO_H - 2)),
+      phase: (Math.abs(h >> 3) % 100) / 100 + i * 0.01,
+    };
+  });
+  afterlife = { souls, px: Math.floor(ANOYO_W / 2), py: ANOYO_H - 2, fromTown: townName };
+  scene = "afterlife";
+  se("confirm");
+  log.push(`${townName}の いれいひに てを あわせた… まぶたの うらに あのよが ひろがる。`);
+}
+
+function renderAfterlife(): void {
+  if (!ctx || !afterlife || !snapshot) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.textBaseline = "top";
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, "#0a0f1e");
+  grad.addColorStop(1, "#161226");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, w, h);
+  const ox = (w - ANOYO_W * CELL) / 2;
+  const oy = (h - ANOYO_H * CELL) / 2 - 20;
+  const now5 = performance.now();
+
+  // A field of pale grass under a starless sky.
+  for (let y = 0; y < ANOYO_H; y++) {
+    for (let x = 0; x < ANOYO_W; x++) {
+      ctx.fillStyle = (x + y) % 2 === 0 ? "#1b2136" : "#181d30";
+      ctx.fillRect(ox + x * CELL, oy + y * CELL, CELL, CELL);
+      if ((x * 7 + y * 13) % 11 === 0) {
+        ctx.fillStyle = "rgba(160, 200, 255, 0.10)";
+        ctx.fillRect(ox + x * CELL + 12, oy + y * CELL + 20, 3, 10);
+      }
+    }
+  }
+  // Drifting motes.
+  for (let i = 0; i < 40; i++) {
+    const t = (now5 / 3000 + i * 0.137) % 1;
+    ctx.fillStyle = `rgba(200, 225, 255, ${(0.25 * (1 - t)).toFixed(2)})`;
+    ctx.fillRect(ox + ((i * 97) % (ANOYO_W * CELL)), oy + ANOYO_H * CELL - t * ANOYO_H * CELL, 2, 2);
+  }
+
+  for (const soul of afterlife.souls) {
+    const bob = Math.sin(now5 / 900 + soul.phase * 6.3) * 4;
+    const pair = sprites.roles[soul.agent.role] ?? sprites.roles["artisan"];
+    if (!pair) continue;
+    ctx.globalAlpha = 0.42 + Math.sin(now5 / 1400 + soul.phase * 3) * 0.12;
+    ctx.drawImage(pair[Math.floor(now5 / 500) % 2 === 0 ? 0 : 1], ox + soul.x * CELL, oy + soul.y * CELL + bob);
+    ctx.globalAlpha = 1;
+  }
+
+  const heroPair4 = sprites.heroFor(titleTier(title));
+  ctx.drawImage(heroPair4[0], ox + afterlife.px * CELL, oy + afterlife.py * CELL);
+
+  ctx.font = '17px "DotGothic16", monospace';
+  ctx.fillStyle = "#c9d4e8";
+  const title2 = `あのよ — ${snapshot.agents.filter((a2) => isDead(a2.region) && a2.role !== "treasury").length}の たましい`;
+  ctx.fillText(title2, ox, oy - 34);
+  ctx.font = '15px "DotGothic16", monospace';
+  ctx.fillStyle = "#7a879c";
+  ctx.fillText(`${afterlife.fromTown}の いれいひより / となりの たましいに Enter: みのうえを きく / Escで もどる`, ox - 30, oy + ANOYO_H * CELL + 14);
+  log.render(ctx, w, h);
+  ui.render(ctx, w, h);
+}
+
 
 /** こうざん: a dark gallery under a boulder. Veins are mined with real mints;
  * what each vein holds is unknown until the pick strikes (the slot-machine joy). */
@@ -1400,7 +1492,20 @@ function hallMenu(village: Village): void {
       } else if (value === "graph") {
         ui.push(new Info(`${region.displayName} — まちのグラフ`, cityGraph(region.id), () => ui.pop()));
       } else if (value === "memorial") {
-        ui.push(new Info(`${region.displayName} — むらの きろく`, memorialLines(region.id, region.displayName), () => ui.pop()));
+        ui.push(
+          new Menu(`${region.displayName} — むらの きろく`, [
+            { label: "きろくを よむ (いれいひ)", value: "read" },
+            { label: "てを あわせる (あのよを のぞむ)", value: "pray" },
+            { label: "もどる", value: "back" },
+          ], (v2) => {
+            if (v2 === "read") {
+              ui.push(new Info(`${region.displayName} — むらの きろく`, memorialLines(region.id, region.displayName), () => ui.pop()));
+            } else if (v2 === "pray") {
+              ui.clear();
+              enterAfterlife(region.displayName, region.id);
+            } else ui.pop();
+          }, () => ui.pop()),
+        );
       } else if (value === "info") villageInfo(ctx);
       else if (value === "inspect") inspectVillage(ctx);
       else if (value === "migrate") void runAct({ kind: "migrate", toRegion: region.id }, `${region.id}へ ひっこす`);
@@ -1802,7 +1907,7 @@ const VERBS: readonly string[] = [
   "むらづくりに きふする", "むらを うりにだす", "むらを かいとる", "むらを ゆずる", "むらを たたむ/ひらく",
   "けんちくする", "けんりしょを ゆずる", "けいざいしんぶんを よむ", "いらいのふだを みる", "せかいのログを よむ",
   "ちずを みる", "でんぱとうに のぼる", "おおがたビジョンを みる", "いれいひに もうでる", "おまつりを おこす",
-  "しゃしんをとる (P)", "ぼうえんきょうで のぞく (T)", "にっきを かく (N)", "にっきを よみかえす",
+  "あのよを のぞむ", "せんぞの みのうえを きく", "しゃしんをとる (P)", "ぼうえんきょうで のぞく (T)", "にっきを かく (N)", "にっきを よみかえす",
   "おじぎする (1)", "ばんざいする (2)", "ハートを おくる (3)", "はなびを あげる", "がっきを かなでる", "ごはんを たべる",
   "きを きる", "いしを ほる", "こうどうに もぐる", "こうせきを ほりあてる", "たてものを かいたいする", "まちのなやみを かいけつする", "RCI需要を よむ",
   "てつどうろせんを ひく", "かいどうを ひく", "ろせんを ゆずる/かいたいする", "ごうせいで かこうする", "こうえきろせんずを ながめる",
@@ -3411,6 +3516,44 @@ window.addEventListener("keydown", (e) => {
     ui.handleKey(e.key);
     return;
   }
+  if (scene === "afterlife" && afterlife) {
+    if (!ui.active) {
+      const dir = DIRS[e.key];
+      if (dir) {
+        const nx = Math.max(0, Math.min(ANOYO_W - 1, afterlife.px + dir[0]));
+        const ny = Math.max(0, Math.min(ANOYO_H - 1, afterlife.py + dir[1]));
+        afterlife.px = nx;
+        afterlife.py = ny;
+        return;
+      }
+      if (e.key === "Escape" || e.key === "x") {
+        scene = "game";
+        afterlife = null;
+        se("cancel");
+        log.push("まぶたを ひらくと、いつもの せかいが あった。");
+        return;
+      }
+      if (e.key === "Enter" || e.key === " " || e.key === "z") {
+        const near = afterlife.souls.find(
+          (sl) => Math.abs(sl.x - (afterlife?.px ?? 0)) <= 1 && Math.abs(sl.y - (afterlife?.py ?? 0)) <= 1,
+        );
+        if (near) {
+          se("confirm");
+          ui.push(
+            new Info(`${near.agent.id} の みのうえ`, [
+              ...biographyOf(near.agent.id),
+              "",
+              "「…おぼえていて くれて ありがとう。」",
+            ], () => ui.clear()),
+          );
+        }
+        return;
+      }
+      return;
+    }
+    ui.handleKey(e.key);
+    return;
+  }
   if (scene === "mine" && mine) {
     if (!ui.active) {
       const dir = DIRS[e.key];
@@ -4714,6 +4857,10 @@ function renderInterior(): void {
 
 let last = performance.now();
 function frame(now: number): void {
+  if (scene === "afterlife") {
+    renderAfterlife();
+    return;
+  }
   if (scene === "mine") {
     renderMine();
     return;
