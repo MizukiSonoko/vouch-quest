@@ -278,12 +278,87 @@ function merge(genome: Genome, add: Additions): { genome: Genome; grown: string[
   return { genome, grown };
 }
 
+// ---- endogenous evolution: when the oracle is silent ----------------------------
+// An expired key must not stop the world. If Claude cannot be reached, the
+// genome still grows — from the world's own facts, folded into a legend. Every
+// line is literally true; only the telling is invented.
+
+interface WorldFacts {
+  living: number;
+  dead: number;
+  topTown: string;
+  topPop: number;
+  richest: string;
+  richestGold: number;
+  logLen: number;
+}
+
+async function gatherFacts(): Promise<WorldFacts> {
+  const regions = await getJson<RegionV[]>("/regions");
+  const agents = await getJson<AgentV[]>("/agents");
+  const metrics = await getJson<{ log: { length: number } }>("/metrics");
+  const folk = agents.filter((a2) => a2.role !== "treasury");
+  const living = folk.filter((a2) => a2.region !== "anoyo");
+  const byTown = new Map<string, number>();
+  for (const a2 of living) byTown.set(a2.region, (byTown.get(a2.region) ?? 0) + 1);
+  const top = [...byTown.entries()].sort((p1, p2) => p2[1] - p1[1])[0] ?? ["", 0];
+  const rich = [...living].sort((p1, p2) => p2.balances.currency - p1.balances.currency)[0];
+  return {
+    living: living.length,
+    dead: folk.length - living.length,
+    topTown: regions.find((r) => r.id === top[0])?.displayName ?? top[0],
+    topPop: top[1],
+    richest: rich?.id ?? "だれか",
+    richestGold: rich?.balances.currency ?? 0,
+    logLen: metrics.log.length,
+  };
+}
+
+function endogenousAdditions(f: WorldFacts): Additions {
+  const kinds = ["legend", "omen", "boom", "fashion", "festival"] as const;
+  const kind = kinds[f.logLen % kinds.length] ?? "legend";
+  return {
+    vocab: [],
+    chatter: [
+      {
+        pool: "generic",
+        lines: [
+          `${f.topTown}には ${f.topPop}にんが くらしているそうな。`,
+          `いきているものは ${f.living}にん、あのよには ${f.dead}にん。`,
+        ],
+      },
+    ],
+    wares: [],
+    professions: [],
+    headlines: [
+      `${f.topTown} じんこう ${f.topPop}にん — せかいの たみ ${f.living}にん`,
+      `ちょうじゃは ${f.richest}、そのふところ ${f.richestGold}G`,
+    ],
+    mutation: {
+      kind,
+      title: `${f.topTown}の にぎわい`,
+      lines: [
+        `${f.topTown}が ${f.topPop}にんを かかえていると もっぱらの うわさ。`,
+        `できごとは ${f.logLen}を かぞえた。せかいは まだ うごいておる。`,
+        `あのよの ${f.dead}にんも、それを みておるそうな。`,
+      ],
+    },
+  };
+}
+
 // ---- run -----------------------------------------------------------------------
 
 const genome = loadGenome();
 const brief = await worldBrief();
 console.log("evolve: observing the world…\n" + brief);
-const additions = await askClaude(genome, brief);
+let additions: Additions;
+try {
+  additions = await askClaude(genome, brief);
+} catch (error) {
+  const why = error instanceof Error ? error.message.split("\n")[0] : String(error);
+  console.log(`evolve: the oracle is silent (${why?.slice(0, 120)}) — growing from the world's own facts instead.`);
+  additions = endogenousAdditions(await gatherFacts());
+}
 const { genome: next, grown } = merge(genome, additions);
 mkdirSync(dirname(GENOME_PATH), { recursive: true });
 const tmp = `${GENOME_PATH}.tmp`;
